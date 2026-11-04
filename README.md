@@ -45,6 +45,8 @@
 
 ## 快速开始
 
+> **下载最新安装包**：[Releases · v1.6.3](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+
 ### 飞牛 OS（推荐）
 
 应用中心「手动安装」选择 `embyprewarm-1.6.3.fpk`，或在 SSH 中：
