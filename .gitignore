@@ -40,3 +40,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# fpk 构建产物（使用根目录的发布包）
+fpk/embyprewarm/embyprewarm.fpk
