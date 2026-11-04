@@ -270,11 +270,21 @@ class Handler(BaseHTTPRequestHandler):
             if self.ctx.strmgen is None:
                 self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
                 return
-            if self.ctx.strmgen.running:
-                self._json({"ok": False, "error": "STRM 生成正在进行中，请稍后再试"})
+            mode = str(body.get("mode") or "").strip().lower()
+            if mode not in ("", "full", "incremental"):
+                self._json({"ok": False, "error": f"未知生成模式 {mode}"}, 400)
                 return
-            self.ctx.strmgen.run_async("手动生成")
-            self._json({"ok": True})
+            task_id = str(body.get("task_id") or "").strip() or None
+            if task_id and not self.ctx.strmgen.tasks(only_id=task_id):
+                self._json({"ok": False, "error": "任务不存在，请刷新页面后重试"}, 400)
+                return
+            if self.ctx.strmgen.running:
+                # 已经在跑就排队，避免定时与手动互相顶掉
+                self.ctx.strmgen.run_async("手动生成", task_id=task_id, mode=mode or None)
+                self._json({"ok": True, "queued": True})
+                return
+            self.ctx.strmgen.run_async("手动生成", task_id=task_id, mode=mode or None)
+            self._json({"ok": True, "queued": False})
         elif path == "/api/strm/stop":
             if self.ctx.strmgen is None:
                 self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
@@ -347,7 +357,10 @@ class Handler(BaseHTTPRequestHandler):
             }
             status["strm"] = {
                 "running": bool(self.ctx.strmgen and self.ctx.strmgen.running),
+                "queued": int(self.ctx.strmgen.queued) if self.ctx.strmgen else 0,
                 "last": self.ctx.store.meta_get("strm_last") or {},
+                "task_state": self.ctx.store.meta_get("strm_task_state") or {},
+                "next_map": self.ctx.scheduler.strm_next_map(),
             }
             status["log_seq"] = self.ctx.bus.seq
             self._json(status)
@@ -380,10 +393,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.ctx.strmgen is None:
                 self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
                 return
-            if self.ctx.strmgen.running:
-                self._json({"ok": False, "error": "STRM 生成正在进行中，请稍后再试"})
+            task_id = (query.get("task") or [""])[0].strip() or None
+            mode = (query.get("mode") or [""])[0].strip() or None
+            self._json(self.ctx.strmgen.plan(task_id=task_id, mode=mode))
+        elif path == "/api/strm/browse":
+            if self.ctx.strmgen is None:
+                self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
                 return
-            self._json(self.ctx.strmgen.plan())
+            target = (query.get("path") or ["/"])[0]
+            self._json(self.ctx.strmgen.browse(target))
         else:
             self._json({"ok": False, "error": "接口不存在"}, 404)
 

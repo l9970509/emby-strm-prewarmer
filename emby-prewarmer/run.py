@@ -197,7 +197,7 @@ def cmd_strm(args: argparse.Namespace) -> int:
     config, store, bus, engine, scheduler, syncer, strmgen = build(
         Path(args.config), data_dir=data_dir, log_dir=log_dir
     )
-    result = strmgen.run("命令行")
+    result = strmgen.run("命令行", task_id=args.task, mode=args.mode)
     if result.get("error"):
         print(f"❌ {result['error']}")
         return 2
@@ -236,6 +236,8 @@ def main() -> int:
     parser.add_argument("--prefix", default=None, help="统一网关路径前缀，例如 /app/embyprewarm")
     parser.add_argument("--data-dir", default=None, help="运行数据目录（默认 <config 目录>/data）")
     parser.add_argument("--log-dir", default=None, help="日志目录（默认 <config 目录>/logs）")
+    parser.add_argument("--task", default=None, help="strm：只生成指定任务 ID（默认全部启用的任务）")
+    parser.add_argument("--mode", default=None, choices=["full", "incremental"], help="strm：全量或增量生成")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args()
 

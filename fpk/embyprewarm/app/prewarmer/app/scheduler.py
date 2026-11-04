@@ -31,7 +31,7 @@ class Scheduler(threading.Thread):
         self._next_retry: float | None = None
         self._next_watch: float | None = None
         self._next_sync: float | None = None
-        self._next_strm: float | None = None
+        self._strm_next: dict[str, float] = {}
         self._last_watch_trigger = 0.0
         self._watch_poke = threading.Event()   # webhook 唤醒标志（防抖合并）
 
@@ -75,22 +75,47 @@ class Scheduler(threading.Thread):
         else:
             self._next_sync = None
 
-        # ---- 定时 STRM 生成（网盘 → strm，与预热/同步互不阻塞）
+        # ---- 定时 STRM 生成（每个目录任务各自独立的每日时刻）
         strm_cfg = cfg.get("strm") or {}
-        if self.strmgen is not None and strm_cfg.get("enabled") and strm_cfg.get("schedule_enabled"):
-            last_strm = float(self.store.meta_get("strm_last_ts") or 0)
-            self._next_strm = self._compute_next_schedule(
-                {"mode": "daily", "daily_times": [strm_cfg.get("schedule_time") or "02:30"]},
-                last_strm,
-                now,
-            )
-            if now >= self._next_strm:
-                self.store.meta_set("strm_last_ts", now)
+        self._strm_next = {}
+        if self.strmgen is not None and strm_cfg.get("enabled"):
+            states = self.store.meta_get("strm_task_state") or {}
+            if not isinstance(states, dict):
+                states = {}
+            dirty = False
+            for task in strm_cfg.get("tasks") or []:
+                if not task.get("enabled", True) or not task.get("schedule_enabled"):
+                    continue
+                times = task.get("schedule_times") or []
+                tid = str(task.get("id") or "")
+                if not tid or not times:
+                    continue
+                entry = states.setdefault(tid, {})
+                last = float(entry.get("schedule_ts") or 0)
+                if last <= 0:
+                    # 首次启用：以当前时间为基准，避免刚保存就立刻跑一次
+                    entry["schedule_ts"] = now
+                    dirty = True
+                    last = now
+                nxt = self._compute_next_schedule({"mode": "daily", "daily_times": times}, last, now)
+                self._strm_next[tid] = nxt
+                if now >= nxt:
+                    entry["schedule_ts"] = now
+                    dirty = True
+                    name = task.get("name") or task.get("remote")
+                    mode_text = "全量" if str(task.get("mode")) == "full" else "增量"
+                    self.bus.info(
+                        f"⏰ 定时生成触发：{name}（{' / '.join(times)} · {mode_text}）",
+                        LogBus.STRM,
+                    )
+                    started = self.strmgen.run_async(
+                        f"定时生成 · {name}", task_id=tid, mode=task.get("mode")
+                    )
+                    if not started:
+                        self.bus.info("…已有生成任务在跑，本次已排入队列", LogBus.STRM)
+            if dirty:
+                self.store.meta_set("strm_task_state", states)
                 self.store.save()
-                self.bus.info("⏰ 定时 STRM 生成触发", LogBus.STRM)
-                self.strmgen.run_async("定时生成")
-        else:
-            self._next_strm = None
 
         # 任务刚结束 → 重置自动重试计时，避免立刻又触发
         if self._was_busy and not self.engine.busy():
@@ -100,14 +125,6 @@ class Scheduler(threading.Thread):
 
         if self.engine.busy():
             return
-
-        # ---- STRM 生成后排队等待的自动预热（生成时预热正忙则在这里补执行）
-        if self.store.meta_get("strm_pending_prewarm") and cfg["emby"].get("token"):
-            self.store.meta_set("strm_pending_prewarm", False)
-            self.store.save()
-            if self.engine.start("full"):
-                self.bus.info("🔥 STRM 已就绪，空闲后自动开始增量预热", LogBus.STRM)
-                return
 
         schedule = cfg["schedule"]
         last_run = float(self.store.meta_get("schedule_last_ts") or 0)
@@ -267,14 +284,20 @@ class Scheduler(threading.Thread):
     def next_strm_text(self) -> str:
         cfg = self.config.get()
         strm = cfg.get("strm") or {}
-        if not strm.get("enabled") or not strm.get("schedule_enabled"):
+        if not strm.get("enabled") or not self._strm_next:
             return "未开启"
-        ts = self._next_strm
-        if ts is None:
-            return "待计算"
+        ts = min(self._strm_next.values())
         if ts <= time.time():
             return "即将执行"
         return fmt_ts(ts)
+
+    def strm_next_map(self) -> dict[str, str]:
+        """每个任务的下次生成时间文案。"""
+        now = time.time()
+        out: dict[str, str] = {}
+        for tid, ts in (self._strm_next or {}).items():
+            out[tid] = "即将执行" if ts <= now else fmt_ts(ts)
+        return out
 
     def info(self) -> dict[str, Any]:
         cfg = self.config.get()

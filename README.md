@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.7.0.fpk    # 当前版本安装包
+└── embyprewarm-1.8.0.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.7.0](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.8.0](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.7.0.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.8.0.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.7.0.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.8.0.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -73,14 +73,20 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 面板第四个页面「STRM 生成」可以把 OpenList（AList 兼容）网盘目录同步成本地 `.strm`：
 
-1. 填 OpenList 地址 + 长期令牌（或账号密码）、STRM 前缀（`http://IP:5244/d` 或 rclone 挂载根）
-2. 添加任务：每行 `网盘目录 = 本地目录`，本地会按网盘结构生成 `影片.strm`
-3. 点「立即生成」先看明细预览（新增/更新/跳过/删除），确认后才写盘；也可每天定时自动生成
+1. 填 OpenList 地址 + 长期令牌（或账号密码）、STRM 前缀（`http://IP:5244/d` 或 rclone 挂载根），
+   点「测试 OpenList 连接」确认可用
+2. 点「添加目录」添加生成任务：网盘目录可以直接**从 OpenList 目录树里浏览选择**，本地目录填写
+   strm 输出位置；每个目录一个独立任务
+3. 每个任务可单独：启用/停用、设置**每天多个定时时刻**、选择默认「增量」或「全量」模式、
+   是否清理网盘已删除的 strm
+4. 每个任务卡片上有「增量生成」「全量生成」按钮，点开后先看明细预览（新增/更新/跳过/删除），
+   确认后才写盘；顶部「全部生成」按各任务自己的模式一起跑
 
-开启「生成后自动预热」后即形成闭环：
+生成后**不主动预热**——等 Emby 扫描到新 strm 并发出入库通知（Webhooks `library.new`），
+本工具收到通知再触发增量预热，形成闭环：
 
 ```
-网盘更新 → 生成 STRM → 自动增量预热 → 导出 mediainfo.json → 自动同步备份目录 B
+网盘更新 → 生成 STRM → Emby 入库通知 → 自动增量预热 → 导出 mediainfo.json → 自动同步备份目录 B
 ```
 
 全链路都在本工具内完成，每一步都有独立日志页面与变动通知（只推有实际变动的任务）。

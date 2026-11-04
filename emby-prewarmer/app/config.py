@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -104,15 +105,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # strm 内容前缀：OpenList 的 http://IP:5244/d 或 rclone 挂载点，
         # 实际写入 = 前缀 + 网盘完整路径；支持 {path} 占位符
         "prefix": "",
-        # 同步任务：[{remote: "/115/影视", local: "/vol2/1000/strm"}]
+        # 生成任务（每个目录一项，各自独立定时与手动生成）：
+        # [{id, name, remote, local, enabled, mode, rebuild, schedule_enabled, schedule_times[]}]
         "tasks": [],
         "exts": "mkv,mp4,ts,m2ts,iso,avi,wmv,mov,flv,rmvb,webm,mpg,mpeg",
         # 一并下载的附件扩展名（nfo/字幕/海报），留空表示不下载
         "extras": "nfo,srt,ass,ssa,sub,sup,vtt,jpg,jpeg,png,webp",
         "max_file_mb": 200,          # 附件下载大小上限
-        "rebuild": False,            # 重建：删除网盘已不存在的本地 strm
-        "after_generate": "prewarm",  # prewarm | none（生成后自动预热）
-        "schedule_enabled": False,   # 每天定时生成
+        # 以下两项为 1.7.0 的全局定时/重建，仅用于旧配置迁移，新配置按任务保存
+        "rebuild": False,
+        "schedule_enabled": False,
         "schedule_time": "02:30",
     },
     "notify": {
@@ -205,6 +207,39 @@ def _apply_clamps(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _norm_clock(value: Any, fallback: str) -> str:
+    """把 "2:5" / "02：05" 规范成 "02:05"；不合法时用 fallback。"""
+    text = str(value or "").strip().replace("：", ":")
+    parts = text.split(":")
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+        return f"{hour:02d}:{minute:02d}"
+    except (ValueError, IndexError):
+        return fallback
+
+
+def _norm_time_list(value: Any) -> list[str]:
+    """接收 ["02:30", "14:00"] 或 "02:30,14:00"，去重并排序。"""
+    if isinstance(value, str):
+        items: list[Any] = value.replace("，", ",").split(",")
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        items = []
+    out: set[str] = set()
+    for item in items:
+        for piece in str(item or "").replace("，", ",").split(","):
+            text = piece.strip().replace("：", ":")
+            if not text:
+                continue
+            normalized = _norm_clock(text, "")
+            if normalized:
+                out.add(normalized)
+    return sorted(out)
+
+
 def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
     """把外部传入的配置合并到默认值之上，并做类型与范围校验。"""
     cfg = _coerce(DEFAULT_CONFIG, user_cfg or {})
@@ -274,28 +309,24 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
     strm_cfg["openlist_token"] = (strm_cfg.get("openlist_token") or "").strip()
     strm_cfg["openlist_username"] = (strm_cfg.get("openlist_username") or "").strip()
     strm_cfg["prefix"] = (strm_cfg.get("prefix") or "").strip().rstrip("/")
-    strm_cfg["after_generate"] = (
-        "none" if str(strm_cfg.get("after_generate") or "").strip().lower() == "none" else "prewarm"
-    )
     raw_strm_time = str(strm_cfg.get("schedule_time") or "02:30").strip().replace("：", ":")
-    parts = raw_strm_time.split(":")
-    try:
-        hour, minute = int(parts[0]), int(parts[1])
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError
-        strm_cfg["schedule_time"] = f"{hour:02d}:{minute:02d}"
-    except (ValueError, IndexError):
-        strm_cfg["schedule_time"] = "02:30"
+    legacy_strm_time = _norm_clock(raw_strm_time, "02:30")
+    strm_cfg["schedule_time"] = legacy_strm_time
 
-    # 同步任务：兼容 [{remote, local}] 与 "remote = local" 两种写法
-    raw_tasks = (user_cfg or {}).get("strm", {}).get("tasks")
-    tasks: list[dict[str, str]] = []
+    # 生成任务：每个目录一项，兼容旧版 [{remote, local}] 与 "remote = local" 行写法
+    raw_user_strm = (user_cfg or {}).get("strm") or {}
+    raw_tasks = raw_user_strm.get("tasks")
+    legacy_sched_on = bool(raw_user_strm.get("schedule_enabled"))
+    legacy_rebuild = bool(raw_user_strm.get("rebuild"))
+    tasks: list[dict[str, Any]] = []
     if isinstance(raw_tasks, str):
         raw_tasks = [line for line in raw_tasks.splitlines() if line.strip()]
     if isinstance(raw_tasks, list):
-        for item in raw_tasks:
+        for index, item in enumerate(raw_tasks):
             remote = local = ""
+            raw: dict[str, Any] = {}
             if isinstance(item, dict):
+                raw = item
                 remote = str(item.get("remote") or "").strip()
                 local = str(item.get("local") or "").strip()
             elif isinstance(item, str):
@@ -308,8 +339,46 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
                 continue
             if not remote.startswith("/"):
                 remote = "/" + remote
-            tasks.append({"remote": remote.rstrip("/") or "/", "local": local.rstrip("/")})
+            remote = remote.rstrip("/") or "/"
+            local = local.rstrip("/")
+
+            # 任务 ID 必须稳定：缺省时按网盘目录生成，保证定时记录能对上
+            task_id = str(raw.get("id") or "").strip()
+            if not task_id:
+                task_id = "t" + hashlib.md5(remote.encode("utf-8")).hexdigest()[:8]
+            if any(t["id"] == task_id for t in tasks):
+                task_id = f"{task_id}-{index + 1}"
+
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                name = remote.rstrip("/").split("/")[-1] or f"任务 {index + 1}"
+
+            # 定时时刻：优先任务自己的；旧配置没写则继承全局设置
+            if "schedule_times" in raw or "schedule_enabled" in raw:
+                times = _norm_time_list(raw.get("schedule_times"))
+                flag = raw.get("schedule_enabled", True if times else False)
+                sched_on = bool(flag) and bool(times)
+            else:
+                times = [legacy_strm_time] if legacy_sched_on else []
+                sched_on = legacy_sched_on
+
+            tasks.append(
+                {
+                    "id": task_id,
+                    "name": name,
+                    "remote": remote,
+                    "local": local,
+                    "enabled": _coerce(True, raw.get("enabled", True)),
+                    "mode": "full" if str(raw.get("mode") or "").strip().lower() == "full" else "incremental",
+                    "rebuild": _coerce(True, raw["rebuild"]) if "rebuild" in raw else legacy_rebuild,
+                    "schedule_enabled": sched_on,
+                    "schedule_times": times,
+                }
+            )
     strm_cfg["tasks"] = tasks
+    # 全局定时/重建仅作旧配置兼容，逻辑已按任务走
+    strm_cfg["schedule_enabled"] = any(t["schedule_enabled"] for t in tasks)
+    strm_cfg["rebuild"] = any(t["rebuild"] for t in tasks)
     return cfg
 
 

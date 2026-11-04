@@ -65,7 +65,11 @@ const el = {
   kvStrmSource: $('#kvStrmSource'),
   kvStrmPrefix: $('#kvStrmPrefix'),
   kvStrmNext: $('#kvStrmNext'),
-  kvStrmAfter: $('#kvStrmAfter'),
+  kvStrmTasks: $('#kvStrmTasks'),
+  kvTaskTotal: $('#kvTaskTotal'),
+  kvTaskEnabled: $('#kvTaskEnabled'),
+  kvTaskSched: $('#kvTaskSched'),
+  kvTaskQueued: $('#kvTaskQueued'),
   strmTaskList: $('#strmTaskList'),
   strmTaskBadge: $('#strmTaskBadge'),
   strmLog: $('#strmLog'),
@@ -86,6 +90,14 @@ let state = {
   historyLoadedAt: 0,
   plan: null,
   strmPlan: null,
+  // STRM：任务列表在本地编辑，保存时整体提交
+  strmTasks: [],
+  strmStatus: {},
+  taskTimes: [],
+  editingTaskId: null,
+  planTask: null,
+  planMode: 'incremental',
+  browsePath: '/',
 };
 
 /* ------------------------------------------------------------------ 页面路由 */
@@ -329,14 +341,15 @@ function renderStatus(s) {
   // STRM 生成（生成页）
   const strm = s.strm || {};
   const lastStrm = strm.last || {};
+  state.strmStatus = strm;
   if (strm.running) {
-    el.strmBadge.textContent = '生成中';
+    el.strmBadge.textContent = strm.queued ? `生成中 · 排队 ${strm.queued}` : '生成中';
     el.strmBadge.className = 'badge ok';
   } else {
     el.strmBadge.textContent = lastStrm.ts ? (lastStrm.ok ? '正常' : '异常') : '未运行';
     el.strmBadge.className = 'badge' + (lastStrm.ts ? (lastStrm.ok ? ' ok' : ' has') : '');
   }
-  el.btnStrmNow.disabled = !!strm.running;
+  el.btnStrmNow.disabled = false;
   el.btnStrmStop.disabled = !strm.running;
   el.strmLastText.textContent = lastStrm.ts_text || '—';
   el.strmReasonText.textContent = lastStrm.ts
@@ -354,9 +367,8 @@ function renderStatus(s) {
     el.kvStrmSource.title = state.cfg.strm.openlist_url || '';
     el.kvStrmPrefix.textContent = state.cfg.strm.prefix || '(未设置)';
     el.kvStrmPrefix.title = state.cfg.strm.prefix || '';
-    el.kvStrmAfter.textContent = state.cfg.strm.after_generate === 'prewarm' ? '已开启' : '已关闭';
-    el.kvStrmAfter.className = state.cfg.strm.after_generate === 'prewarm' ? 'on' : 'off';
   }
+  updateStrmTaskStatus();
 
   // 上次运行时间（预热页）
   const lastSum = s.last_summary || {};
@@ -637,6 +649,8 @@ $('#syncModalMask').addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (!$('#browseModalMask').hidden) { closeBrowse(); return; }
+  if (!$('#taskModalMask').hidden) { closeTaskModal(); return; }
   if (!$('#syncModalMask').hidden) closeSyncModal();
   if (!$('#strmModalMask').hidden) closeStrmModal();
 });
@@ -679,7 +693,383 @@ const STRM_ACTION_LABEL = {
   delete: '删除',
   extra: '附件',
 };
+const STRM_MODE_LABEL = { incremental: '增量', full: '全量' };
 
+function normalizeStrmTask(t) {
+  const remote = String((t && t.remote) || '').trim();
+  const fallbackName = remote.replace(/\/+$/, '').split('/').pop() || '任务';
+  return {
+    id: String((t && t.id) || ''),
+    name: String((t && t.name) || fallbackName),
+    remote,
+    local: String((t && t.local) || '').trim().replace(/\/+$/, ''),
+    enabled: !(t && t.enabled === false),
+    mode: t && t.mode === 'full' ? 'full' : 'incremental',
+    rebuild: !!(t && t.rebuild),
+    schedule_enabled: !!(t && t.schedule_enabled),
+    schedule_times: Array.isArray(t && t.schedule_times) ? t.schedule_times.slice().sort() : [],
+  };
+}
+
+function showMask(selector) {
+  const mask = $(selector);
+  if (!mask) return;
+  mask.hidden = false;
+  requestAnimationFrame(() => mask.classList.add('show'));
+}
+
+function hideMask(selector) {
+  const mask = $(selector);
+  if (!mask) return;
+  mask.classList.remove('show');
+  setTimeout(() => { mask.hidden = true; }, 180);
+}
+
+function setSeg(id, value) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.querySelectorAll('button[data-mode]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === value);
+  });
+}
+
+function segValue(id) {
+  const box = document.getElementById(id);
+  const active = box && box.querySelector('button[data-mode].active');
+  return active ? active.dataset.mode : 'incremental';
+}
+
+function taskLastText(st) {
+  if (!st || !st.ts) return '尚未生成过';
+  let text = `${st.ts_text || ''} · ${STRM_MODE_LABEL[st.mode] || '增量'} · ` +
+    `新增 ${st.created || 0} / 更新 ${st.updated || 0} / 跳过 ${st.skipped || 0}`;
+  if (st.deleted) text += ` / 删除 ${st.deleted}`;
+  if (st.failed) text += ` / 失败 ${st.failed}`;
+  return text;
+}
+
+function renderStrmTasks() {
+  const tasks = state.strmTasks || [];
+  const enabled = tasks.filter((t) => t.enabled);
+  const scheduled = enabled.filter((t) => t.schedule_enabled && (t.schedule_times || []).length);
+  el.strmTaskBadge.textContent = tasks.length;
+  el.kvTaskTotal.textContent = tasks.length;
+  el.kvTaskEnabled.textContent = enabled.length;
+  el.kvTaskSched.textContent = scheduled.length;
+  el.kvStrmTasks.textContent = `${enabled.length} / ${tasks.length}`;
+
+  if (!tasks.length) {
+    el.strmTaskList.innerHTML = '<div class="empty">尚未配置任务，点右上角「添加目录」</div>';
+    return;
+  }
+  const st = state.strmStatus || {};
+  const states = st.task_state || {};
+  const nextMap = st.next_map || {};
+  el.strmTaskList.innerHTML = tasks.map((t) => {
+    const info = states[t.id] || {};
+    const chips = [
+      `<span class="pill ${t.mode === 'full' ? 'pill-full' : 'pill-inc'}">默认${STRM_MODE_LABEL[t.mode]}</span>`,
+    ];
+    if (t.schedule_enabled && (t.schedule_times || []).length) {
+      chips.push(`<span class="pill pill-sched">每天 ${escapeHtml(t.schedule_times.join(' / '))}</span>`);
+    } else {
+      chips.push('<span class="pill pill-off">未定时</span>');
+    }
+    if (t.rebuild) chips.push('<span class="pill pill-warn">清理残留</span>');
+    if (!t.enabled) chips.push('<span class="pill pill-off">已停用</span>');
+    const next = nextMap[t.id] ? `下次 ${nextMap[t.id]}` : '';
+    return `<article class="strm-task-card${t.enabled ? '' : ' is-off'}" data-task="${escapeHtml(t.id)}">
+      <div class="stc-head">
+        <div class="stc-title">
+          <b title="${escapeHtml(t.name)}">${escapeHtml(t.name || '未命名')}</b>
+          ${chips.join('')}
+        </div>
+        <label class="switch" title="启用 / 停用此任务"><input type="checkbox" class="js-task-enabled"${t.enabled ? ' checked' : ''}><i></i></label>
+      </div>
+      <div class="stc-paths">
+        <div><span>网盘</span><code title="${escapeHtml(t.remote)}">${escapeHtml(t.remote)}</code></div>
+        <div><span>本地</span><code title="${escapeHtml(t.local)}">${escapeHtml(t.local)}</code></div>
+      </div>
+      <div class="stc-meta" data-task-meta="${escapeHtml(t.id)}">
+        <span class="stc-last">${escapeHtml(taskLastText(info))}</span>
+        <span class="stc-next">${escapeHtml(next)}</span>
+      </div>
+      <div class="stc-ops">
+        <button class="btn sm primary js-task-run" data-mode="incremental" type="button">增量生成</button>
+        <button class="btn sm js-task-run" data-mode="full" type="button">全量生成</button>
+        <button class="btn sm ghost js-task-edit" type="button">编辑</button>
+        <button class="btn sm ghost danger js-task-del" type="button">删除</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function updateStrmTaskStatus() {
+  const st = state.strmStatus || {};
+  const states = st.task_state || {};
+  const nextMap = st.next_map || {};
+  document.querySelectorAll('#strmTaskList [data-task-meta]').forEach((node) => {
+    const id = node.dataset.taskMeta;
+    const last = node.querySelector('.stc-last');
+    const next = node.querySelector('.stc-next');
+    if (last) last.textContent = taskLastText(states[id] || {});
+    if (next) next.textContent = nextMap[id] ? `下次 ${nextMap[id]}` : '';
+  });
+  el.kvTaskQueued.textContent = st.queued || 0;
+}
+
+/* ---------------------------------------------------- 任务增删改（立即生效） */
+async function persistTasks() {
+  if (!state.cfg) throw new Error('配置尚未加载');
+  const payload = JSON.parse(JSON.stringify(state.cfg));
+  payload.strm = payload.strm || {};
+  payload.strm.tasks = state.strmTasks.map((t) => ({ ...t }));
+  const res = await api('/api/config', 'POST', { config: payload });
+  if (!res.ok) throw new Error(res.error || '保存失败');
+  state.cfg = res.config;
+  state.strmTasks = (res.config.strm.tasks || []).map(normalizeStrmTask);
+  renderStrmTasks();
+}
+
+function openTaskModal(taskId) {
+  state.editingTaskId = taskId || null;
+  const task = taskId ? state.strmTasks.find((t) => t.id === taskId) : null;
+  $('#taskModalTitle').textContent = task ? '编辑生成目录' : '添加生成目录';
+  $('#taskName').value = task ? task.name : '';
+  $('#taskRemote').value = task ? task.remote : '';
+  $('#taskLocal').value = task ? task.local : '';
+  $('#taskEnabled').checked = task ? !!task.enabled : true;
+  $('#taskRebuild').checked = task ? !!task.rebuild : false;
+  $('#taskSched').checked = task ? !!task.schedule_enabled : false;
+  state.taskTimes = task ? (task.schedule_times || []).slice() : [];
+  setSeg('taskMode', task ? task.mode : 'incremental');
+  $('#taskTime').value = '';
+  renderTaskTimes();
+  showMask('#taskModalMask');
+}
+
+function closeTaskModal() {
+  hideMask('#taskModalMask');
+  state.editingTaskId = null;
+}
+
+function renderTaskTimes() {
+  const box = $('#taskTimeChips');
+  if (!state.taskTimes.length) {
+    box.innerHTML = '<span class="muted">尚未添加时刻</span>';
+    return;
+  }
+  box.innerHTML = state.taskTimes
+    .map((t) => `<span class="chip">${escapeHtml(t)}<button type="button" data-time="${escapeHtml(t)}" title="移除">×</button></span>`)
+    .join('');
+}
+
+function addTaskTime() {
+  const value = ($('#taskTime').value || '').trim();
+  if (!/^\d{2}:\d{2}$/.test(value)) {
+    toast('请先选择一个时刻', true);
+    return;
+  }
+  if (state.taskTimes.includes(value)) {
+    toast('该时刻已存在');
+    return;
+  }
+  state.taskTimes.push(value);
+  state.taskTimes.sort();
+  renderTaskTimes();
+  $('#taskTime').value = '';
+}
+
+async function saveTaskModal() {
+  const remote = $('#taskRemote').value.trim();
+  const local = $('#taskLocal').value.trim();
+  if (!remote || !remote.startsWith('/')) {
+    toast('网盘目录要以 / 开头，可点「浏览…」选择', true);
+    return;
+  }
+  if (!local) {
+    toast('请填写本地目录', true);
+    return;
+  }
+  const schedOn = $('#taskSched').checked;
+  if (schedOn && !state.taskTimes.length) {
+    toast('已开启定时，请至少添加一个时刻', true);
+    return;
+  }
+  const normalizedRemote = remote.replace(/\/+$/, '') || '/';
+  const duplicate = state.strmTasks.find(
+    (t) => t.id !== state.editingTaskId && t.remote === normalizedRemote && t.local === local,
+  );
+  if (duplicate) {
+    toast('已存在相同的网盘目录与本地目录任务', true);
+    return;
+  }
+  const task = {
+    id: state.editingTaskId || '',
+    name: $('#taskName').value.trim() || normalizedRemote.split('/').pop() || '任务',
+    remote: normalizedRemote,
+    local,
+    enabled: $('#taskEnabled').checked,
+    mode: segValue('taskMode'),
+    rebuild: $('#taskRebuild').checked,
+    schedule_enabled: schedOn,
+    schedule_times: state.taskTimes.slice(),
+  };
+  if (state.editingTaskId) {
+    const idx = state.strmTasks.findIndex((t) => t.id === state.editingTaskId);
+    if (idx >= 0) state.strmTasks[idx] = task;
+    else state.strmTasks.push(task);
+  } else {
+    state.strmTasks.push(task);
+  }
+  const btn = $('#btnSaveTask');
+  btn.disabled = true;
+  try {
+    await persistTasks();
+    closeTaskModal();
+    toast('任务已保存');
+    refresh();
+  } catch (e) {
+    toast('保存失败：' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteTask(taskId) {
+  const task = state.strmTasks.find((t) => t.id === taskId);
+  if (!task) return;
+  if (!window.confirm(`删除任务「${task.name}」？\n只删除任务配置，不会删除本地已生成的 strm 文件。`)) return;
+  state.strmTasks = state.strmTasks.filter((t) => t.id !== taskId);
+  try {
+    await persistTasks();
+    toast('任务已删除');
+    refresh();
+  } catch (e) {
+    toast('删除失败：' + e.message, true);
+    await loadConfig();
+  }
+}
+
+el.strmTaskList.addEventListener('click', (e) => {
+  const card = e.target.closest('[data-task]');
+  if (!card) return;
+  const taskId = card.dataset.task;
+  const runBtn = e.target.closest('.js-task-run');
+  if (runBtn) {
+    openStrmModal(taskId, runBtn.dataset.mode);
+    return;
+  }
+  if (e.target.closest('.js-task-edit')) {
+    openTaskModal(taskId);
+    return;
+  }
+  if (e.target.closest('.js-task-del')) {
+    deleteTask(taskId);
+  }
+});
+
+el.strmTaskList.addEventListener('change', async (e) => {
+  if (!e.target.classList.contains('js-task-enabled')) return;
+  const card = e.target.closest('[data-task]');
+  const task = state.strmTasks.find((t) => t.id === card.dataset.task);
+  if (!task) return;
+  const before = task.enabled;
+  task.enabled = e.target.checked;
+  try {
+    await persistTasks();
+    toast(task.enabled ? '任务已启用' : '任务已停用');
+  } catch (err) {
+    task.enabled = before;
+    renderStrmTasks();
+    toast('保存失败：' + err.message, true);
+  }
+});
+
+$('#btnAddStrmTask').addEventListener('click', () => openTaskModal(null));
+$('#btnCloseTaskModal').addEventListener('click', closeTaskModal);
+$('#btnCancelTask').addEventListener('click', closeTaskModal);
+$('#taskModalMask').addEventListener('click', (e) => {
+  if (e.target === $('#taskModalMask')) closeTaskModal();
+});
+$('#btnSaveTask').addEventListener('click', saveTaskModal);
+$('#btnAddTaskTime').addEventListener('click', addTaskTime);
+$('#taskTime').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addTaskTime(); }
+});
+$('#taskTimeChips').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-time]');
+  if (!btn) return;
+  state.taskTimes = state.taskTimes.filter((t) => t !== btn.dataset.time);
+  renderTaskTimes();
+});
+$('#taskMode').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  setSeg('taskMode', btn.dataset.mode);
+});
+
+/* ---------------------------------------------------------- 目录浏览 */
+async function loadBrowse(path) {
+  const list = $('#browseList');
+  list.innerHTML = '<div class="empty">正在读取…</div>';
+  $('#browseHint').textContent = '';
+  try {
+    const data = await api('/api/strm/browse?path=' + encodeURIComponent(path || '/'));
+    if (!data.ok) {
+      list.innerHTML = `<div class="empty">${escapeHtml(data.error || '读取失败')}</div>`;
+      return;
+    }
+    state.browsePath = data.path;
+    $('#browsePath').textContent = data.path;
+    const rows = [];
+    if (data.path !== '/') {
+      rows.push(`<button class="browse-item" type="button" data-path="${escapeHtml(data.parent)}">
+        <span class="bi-ic">↰</span><span class="bi-name">返回上级</span></button>`);
+    }
+    for (const dir of data.dirs || []) {
+      rows.push(`<button class="browse-item" type="button" data-path="${escapeHtml(dir.path)}">
+        <span class="bi-ic">📁</span><span class="bi-name">${escapeHtml(dir.name)}</span><span class="bi-go">›</span></button>`);
+    }
+    list.innerHTML = rows.length ? rows.join('') : '<div class="empty">该目录下没有子目录</div>';
+    $('#browseHint').textContent = `当前目录还有 ${data.file_count || 0} 个文件`;
+  } catch (e) {
+    list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function openBrowse() {
+  state.browsePath = ($('#taskRemote').value || '').trim() || '/';
+  $('#browsePath').textContent = state.browsePath;
+  showMask('#browseModalMask');
+  loadBrowse(state.browsePath);
+}
+
+function closeBrowse() {
+  hideMask('#browseModalMask');
+}
+
+$('#btnBrowseRemote').addEventListener('click', openBrowse);
+$('#btnCloseBrowse').addEventListener('click', closeBrowse);
+$('#btnBrowseCancel').addEventListener('click', closeBrowse);
+$('#browseModalMask').addEventListener('click', (e) => {
+  if (e.target === $('#browseModalMask')) closeBrowse();
+});
+$('#browseList').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-path]');
+  if (!btn) return;
+  loadBrowse(btn.dataset.path);
+});
+$('#btnBrowsePick').addEventListener('click', () => {
+  $('#taskRemote').value = state.browsePath;
+  closeBrowse();
+  const nameInput = $('#taskName');
+  if (!nameInput.value.trim()) {
+    nameInput.value = state.browsePath.replace(/\/+$/, '').split('/').pop() || '';
+  }
+});
+
+/* ---------------------------------------------------------- 生成预览 */
 function renderStrmPlanList() {
   const plan = state.strmPlan;
   const list = $('#strmPlanList');
@@ -689,72 +1079,86 @@ function renderStrmPlanList() {
     return;
   }
   const onlyChanged = $('#strmOnlyChanged').checked;
-  const items = (plan.items || []).filter(
-    (it) => !onlyChanged || (it.action !== 'skip'),
-  );
+  const items = (plan.items || []).filter((it) => !onlyChanged || it.action !== 'skip');
   if (!items.length) {
     list.innerHTML = '<div class="empty">没有可显示的文件</div>';
   } else {
-    list.innerHTML = items
-      .map((it) => {
-        const tag = STRM_ACTION_LABEL[it.action] || it.action;
-        const cls = it.action === 'create' ? 'plan-copy' : it.action === 'delete' ? 'plan-del' : 'plan-skip';
-        return `<div class="plan-item">
-          <span class="plan-tag ${cls}">${tag}</span>
-          <span class="plan-path" title="${escapeHtml(it.remote || it.rel)}">${escapeHtml(it.rel)}</span>
-          <span class="plan-size">${fmtSize(it.size)}</span>
-        </div>`;
-      })
-      .join('');
+    list.innerHTML = items.map((it) => {
+      const tag = STRM_ACTION_LABEL[it.action] || it.action;
+      const cls = it.action === 'create' ? 'plan-copy' : it.action === 'delete' ? 'plan-del' : 'plan-skip';
+      return `<div class="plan-item">
+        <span class="plan-tag ${cls}">${tag}</span>
+        <span class="plan-path" title="${escapeHtml(it.remote || it.rel)}">${escapeHtml(it.rel)}</span>
+        <span class="plan-size">${fmtSize(it.size)}</span>
+      </div>`;
+    }).join('');
   }
   const changed = (plan.create || 0) + (plan.update || 0) + (plan.delete || 0) + (plan.extra || 0);
   $('#btnConfirmStrm').disabled = changed === 0;
 }
 
-function openStrmModal() {
-  const mask = $('#strmModalMask');
-  mask.hidden = false;
-  requestAnimationFrame(() => mask.classList.add('show'));
+async function loadStrmPlan() {
   $('#strmPlanSummary').textContent = '正在读取网盘目录，大库可能需要一会儿…';
   $('#strmPlanList').innerHTML = '<div class="empty">正在读取…</div>';
   $('#btnConfirmStrm').disabled = true;
-  $('#strmOnlyChanged').checked = true;
-  api('/api/strm/plan')
-    .then((plan) => {
-      state.strmPlan = plan;
-      if (!plan.ok) {
-        $('#strmPlanSummary').textContent = '❌ ' + (plan.error || '读取失败');
-        renderStrmPlanList();
-        return;
-      }
-      if (plan.empty) {
-        $('#strmPlanSummary').textContent = '网盘与本地一致，没有需要生成的文件';
-        $('#strmPlanList').innerHTML = '<div class="empty">没有需要生成的文件</div>';
-        return;
-      }
-      const parts = [];
-      if (plan.create) parts.push(`<b class="plan-copy">新增 ${plan.create}</b>`);
-      if (plan.update) parts.push(`更新 ${plan.update}`);
-      if (plan.extra) parts.push(`附件 ${plan.extra}`);
-      if (plan.delete) parts.push(`<b class="plan-del">删除 ${plan.delete}</b>`);
-      if (plan.skipped) parts.push(`跳过 ${plan.skipped}`);
-      let text = parts.join(' · ');
-      if (plan.truncated) text += '，明细仅显示前 1000 条';
-      if (plan.errors && plan.errors.length) {
-        text += `<br><span class="muted">${escapeHtml(plan.errors[0])}</span>`;
-      }
-      $('#strmPlanSummary').innerHTML = text;
+  const params = new URLSearchParams();
+  if (state.planTask) params.set('task', state.planTask);
+  params.set('mode', state.planMode);
+  try {
+    const plan = await api('/api/strm/plan?' + params.toString());
+    state.strmPlan = plan;
+    if (!plan.ok) {
+      $('#strmPlanSummary').textContent = '❌ ' + (plan.error || '读取失败');
       renderStrmPlanList();
-    })
-    .catch((e) => {
-      $('#strmPlanSummary').textContent = '❌ ' + e.message;
-    });
+      return;
+    }
+    if (plan.empty) {
+      $('#strmPlanSummary').textContent = `${STRM_MODE_LABEL[state.planMode]}模式下网盘与本地一致，没有需要生成的文件`;
+      $('#strmPlanList').innerHTML = '<div class="empty">没有需要生成的文件</div>';
+      return;
+    }
+    const parts = [];
+    if (plan.create) parts.push(`<b class="plan-copy">新增 ${plan.create}</b>`);
+    if (plan.update) parts.push(`更新 ${plan.update}`);
+    if (plan.extra) parts.push(`附件 ${plan.extra}`);
+    if (plan.delete) parts.push(`<b class="plan-del">删除 ${plan.delete}</b>`);
+    if (plan.skipped) parts.push(`跳过 ${plan.skipped}`);
+    let text = parts.join(' · ');
+    if (plan.truncated) text += '，明细仅显示前 1000 条';
+    if (plan.groups && plan.groups.length > 1) {
+      text += '<div class="plan-groups">' + plan.groups.map((g) => {
+        const c = g.counts || {};
+        let line = `${escapeHtml(g.name)}：新增 ${c.create || 0} / 更新 ${c.update || 0} / 跳过 ${c.skip || 0}`;
+        if (c.delete) line += ` / 删除 ${c.delete}`;
+        return line;
+      }).join('<br>') + '</div>';
+    }
+    if (plan.errors && plan.errors.length) {
+      text += `<br><span class="muted">${escapeHtml(plan.errors[0])}</span>`;
+    }
+    $('#strmPlanSummary').innerHTML = text;
+    renderStrmPlanList();
+  } catch (e) {
+    $('#strmPlanSummary').textContent = '❌ ' + e.message;
+  }
+}
+
+function openStrmModal(taskId, mode) {
+  state.planTask = taskId || null;
+  state.planMode = mode === 'full' ? 'full' : 'incremental';
+  setSeg('strmPlanMode', state.planMode);
+  const task = taskId ? state.strmTasks.find((t) => t.id === taskId) : null;
+  $('#strmModalTitle').textContent = task ? `生成预览 · ${task.name}` : '生成预览 · 全部启用任务';
+  $('#strmPlanScope').textContent = task
+    ? task.remote
+    : `${state.strmTasks.filter((t) => t.enabled).length} 个启用任务`;
+  $('#strmOnlyChanged').checked = true;
+  showMask('#strmModalMask');
+  loadStrmPlan();
 }
 
 function closeStrmModal() {
-  const mask = $('#strmModalMask');
-  mask.classList.remove('show');
-  setTimeout(() => { mask.hidden = true; }, 180);
+  hideMask('#strmModalMask');
   state.strmPlan = null;
 }
 
@@ -772,27 +1176,38 @@ $('#strmModalMask').addEventListener('click', (e) => {
   if (e.target === $('#strmModalMask')) closeStrmModal();
 });
 $('#strmOnlyChanged').addEventListener('change', renderStrmPlanList);
+$('#strmPlanMode').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  state.planMode = btn.dataset.mode;
+  setSeg('strmPlanMode', state.planMode);
+  loadStrmPlan();
+});
 
 $('#btnStrmNow').addEventListener('click', () => {
-  if (!(state.cfg && state.cfg.strm && (state.cfg.strm.tasks || []).length)) {
-    toast('请先在「生成设置」中配置 OpenList 与任务目录', true);
+  if (!state.strmTasks.some((t) => t.enabled)) {
+    toast('请先添加并启用至少一个生成目录', true);
     openStrmSettings();
     return;
   }
-  openStrmModal();
+  openStrmModal(null, 'incremental');
 });
 
 $('#btnConfirmStrm').addEventListener('click', async () => {
   const btn = $('#btnConfirmStrm');
   btn.disabled = true;
   try {
-    const res = await api('/api/strm', 'POST', {});
+    const res = await api('/api/strm', 'POST', {
+      task_id: state.planTask || '',
+      mode: state.planMode,
+    });
     if (res.ok) {
       closeStrmModal();
-      toast('STRM 生成已开始，可在生成日志查看进度');
-      el.strmBadge.textContent = '生成中';
+      toast(res.queued ? '已有生成任务在跑，本次已排队' : 'STRM 生成已开始，可在生成日志查看进度');
+      el.strmBadge.textContent = res.queued ? '排队中' : '生成中';
       el.strmBadge.className = 'badge ok';
       await pollLogs();
+      refresh();
     } else {
       toast(res.error || '启动失败', true);
       btn.disabled = false;
@@ -826,7 +1241,7 @@ $('#btnTestOpenlist').addEventListener('click', async () => {
           openlist_token: $('#cfgOlToken').value.trim(),
           openlist_username: $('#cfgOlUser').value.trim(),
           openlist_password: $('#cfgOlPass').value,
-          tasks: parseStrmTasks($('#cfgStrmTasks').value),
+          tasks: state.strmTasks.map((t) => ({ remote: t.remote })),
         },
       },
     });
@@ -931,27 +1346,11 @@ function fillConfig(cfg) {
   $('#cfgOlPass').value = '';
   $('#cfgOlPass').placeholder = strm.openlist_password_set ? '已配置，留空则不修改' : '留空则不修改';
   $('#cfgStrmPrefix').value = strm.prefix || '';
-  $('#cfgStrmTasks').value = (strm.tasks || []).map((t) => `${t.remote} = ${t.local}`).join('\n');
   $('#cfgStrmExts').value = strm.exts || '';
   $('#cfgStrmExtras').value = strm.extras || '';
   $('#cfgStrmMaxMb').value = strm.max_file_mb != null ? strm.max_file_mb : 200;
-  $('#cfgStrmRebuild').checked = !!strm.rebuild;
-  $('#cfgStrmAfter').checked = (strm.after_generate || 'prewarm') !== 'none';
-  $('#cfgStrmSched').checked = !!strm.schedule_enabled;
-  $('#cfgStrmTime').value = strm.schedule_time || '02:30';
-  renderStrmTasks(strm.tasks || []);
-}
-
-function renderStrmTasks(tasks) {
-  el.strmTaskBadge.textContent = tasks.length;
-  if (!tasks.length) {
-    el.strmTaskList.innerHTML = '<li><span class="muted">尚未配置任务</span></li>';
-    return;
-  }
-  el.strmTaskList.innerHTML = tasks
-    .map((t) => `<li><span title="${escapeHtml(t.remote)}">${escapeHtml(shorten(t.remote, 22))}</span>` +
-      `<b title="${escapeHtml(t.local)}">${escapeHtml(shorten(t.local, 18))}</b></li>`)
-    .join('');
+  state.strmTasks = (strm.tasks || []).map(normalizeStrmTask);
+  renderStrmTasks();
 }
 
 function renderDailyChips() {
@@ -1090,30 +1489,12 @@ function collectConfig() {
       openlist_username: $('#cfgOlUser').value.trim(),
       openlist_password: $('#cfgOlPass').value,
       prefix: $('#cfgStrmPrefix').value.trim(),
-      tasks: parseStrmTasks($('#cfgStrmTasks').value),
+      tasks: state.strmTasks.map((t) => ({ ...t })),
       exts: $('#cfgStrmExts').value.trim(),
       extras: $('#cfgStrmExtras').value.trim(),
       max_file_mb: Number($('#cfgStrmMaxMb').value) || 0,
-      rebuild: $('#cfgStrmRebuild').checked,
-      after_generate: $('#cfgStrmAfter').checked ? 'prewarm' : 'none',
-      schedule_enabled: $('#cfgStrmSched').checked,
-      schedule_time: $('#cfgStrmTime').value || '02:30',
     },
   };
-}
-
-function parseStrmTasks(text) {
-  const tasks = [];
-  for (const line of String(text || '').split('\n')) {
-    const raw = line.trim().replace('＝', '=');
-    if (!raw) continue;
-    const idx = raw.indexOf('=');
-    if (idx <= 0) continue;
-    const remote = raw.slice(0, idx).trim();
-    const local = raw.slice(idx + 1).trim();
-    if (remote && local) tasks.push({ remote, local });
-  }
-  return tasks;
 }
 
 async function loadConfig() {
@@ -1131,7 +1512,7 @@ async function saveSettings() {
   if (cfg.sync.enabled && !cfg.sync.target) { toast('启用备份同步需要填写目标目录 B', true); return; }
   if (cfg.strm.enabled) {
     if (!cfg.strm.openlist_url) { toast('启用 STRM 生成需要填写 OpenList 地址', true); openStrmSettings(); return; }
-    if (!cfg.strm.tasks.length) { toast('请至少配置一个生成任务：网盘目录 = 本地目录', true); openStrmSettings(); return; }
+    if (!cfg.strm.tasks.some((t) => t.enabled)) { toast('请至少添加并启用一个生成目录', true); openStrmSettings(); return; }
     if (!cfg.strm.prefix) { toast('请填写 STRM 前缀（OpenList /d 地址或 rclone 挂载根）', true); openStrmSettings(); return; }
   }
   try {
