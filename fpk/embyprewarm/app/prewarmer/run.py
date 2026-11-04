@@ -34,6 +34,7 @@ from app.emby import EmbyClient, EmbyError  # noqa: E402
 from app.engine import Engine  # noqa: E402
 from app.scheduler import Scheduler  # noqa: E402
 from app.state import LogBus, Store  # noqa: E402
+from app.strmgen import StrmGenerator  # noqa: E402
 from app.syncer import Syncer  # noqa: E402
 from app.web import Context, serve, serve_unix, start_in_thread  # noqa: E402
 
@@ -61,7 +62,7 @@ def build(
     console: bool = True,
     data_dir: Path | None = None,
     log_dir: Path | None = None,
-) -> tuple[ConfigStore, Store, LogBus, Engine, Scheduler, Syncer]:
+) -> tuple[ConfigStore, Store, LogBus, Engine, Scheduler, Syncer, StrmGenerator]:
     config_path = Path(config_path).resolve()
     home = config_path.parent
     # fpk 版：配置、运行数据、日志分别落在 TRIM_PKGETC / TRIM_PKGVAR / TRIM_PKGVAR/logs
@@ -76,8 +77,10 @@ def build(
     syncer = Syncer(config, store, bus)
     syncer.engine = engine  # 同步完成后由引擎推送通知（PushPlus / Webhook）
     engine.syncer = syncer
-    scheduler = Scheduler(config, engine, store, bus, syncer=syncer)
-    return config, store, bus, engine, scheduler, syncer
+    strmgen = StrmGenerator(config, store, bus)
+    strmgen.engine = engine  # 生成后可通知 + 自动触发预热（闭环）
+    scheduler = Scheduler(config, engine, store, bus, syncer=syncer, strmgen=strmgen)
+    return config, store, bus, engine, scheduler, syncer, strmgen
 
 
 def resolve_dirs(args: argparse.Namespace) -> tuple[Path | None, Path | None]:
@@ -92,7 +95,7 @@ def resolve_dirs(args: argparse.Namespace) -> tuple[Path | None, Path | None]:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     data_dir, log_dir = resolve_dirs(args)
-    config, store, bus, engine, scheduler, syncer = build(
+    config, store, bus, engine, scheduler, syncer, strmgen = build(
         Path(args.config), data_dir=data_dir, log_dir=log_dir
     )
     cfg = config.get()
@@ -106,7 +109,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         prefix = "/" + prefix
 
     scheduler.start()
-    ctx = Context(config, store, bus, engine, scheduler, BASE_DIR / "web", prefix=prefix, syncer=syncer)
+    ctx = Context(
+        config, store, bus, engine, scheduler, BASE_DIR / "web",
+        prefix=prefix, syncer=syncer, strmgen=strmgen,
+    )
 
     if socket_path:
         httpd = serve_unix(ctx, socket_path)
@@ -169,7 +175,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def cmd_batch(args: argparse.Namespace, mode: str) -> int:
     data_dir, log_dir = resolve_dirs(args)
-    config, store, bus, engine, scheduler, syncer = build(
+    config, store, bus, engine, scheduler, syncer, strmgen = build(
         Path(args.config), data_dir=data_dir, log_dir=log_dir
     )
     if not config.get()["emby"]["token"]:
@@ -183,6 +189,23 @@ def cmd_batch(args: argparse.Namespace, mode: str) -> int:
         f"备份导出 {status['exported']}（跳过 {status['export_skipped']}） / 用时 {status['elapsed']}s"
     )
     return 2 if status["failed"] else 0
+
+
+def cmd_strm(args: argparse.Namespace) -> int:
+    """命令行执行一次 STRM 生成（网盘 → 本地 .strm）。"""
+    data_dir, log_dir = resolve_dirs(args)
+    config, store, bus, engine, scheduler, syncer, strmgen = build(
+        Path(args.config), data_dir=data_dir, log_dir=log_dir
+    )
+    result = strmgen.run("命令行")
+    if result.get("error"):
+        print(f"❌ {result['error']}")
+        return 2
+    print(
+        f"✅ STRM 生成完成：新增 {result.get('created', 0)} / 更新 {result.get('updated', 0)} / "
+        f"跳过 {result.get('skipped', 0)} / 删除 {result.get('deleted', 0)} / 失败 {result.get('failed', 0)}"
+    )
+    return 0 if result.get("ok") else 2
 
 
 def cmd_test(args: argparse.Namespace) -> int:
@@ -205,7 +228,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="fnOS Emby 媒体信息预热工具")
-    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "once", "retry", "export", "scan", "test", "init"])
+    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "once", "retry", "export", "scan", "strm", "test", "init"])
     parser.add_argument("--config", default=str(BASE_DIR / "config.json"))
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
@@ -226,6 +249,8 @@ def main() -> int:
         return cmd_serve(args)
     if args.command == "test":
         return cmd_test(args)
+    if args.command == "strm":
+        return cmd_strm(args)
     return cmd_batch(
         args,
         {"once": "full", "retry": "failed", "export": "export", "scan": "scan"}[args.command],

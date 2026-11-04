@@ -378,6 +378,15 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
 }
 .plan-tag.plan-copy { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-deep); }
 .plan-tag.plan-skip { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+.plan-tag.plan-del { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.modal-sub .plan-del { font-weight: 700; color: var(--danger); }
+
+/* STRM 生成页：任务列表（网盘 → 本地） */
+.strm-tasks li { align-items: center; }
+.strm-tasks li b {
+  max-width: 56%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 550; color: var(--text-2);
+}
 .plan-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
 .plan-size { flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .modal-foot {

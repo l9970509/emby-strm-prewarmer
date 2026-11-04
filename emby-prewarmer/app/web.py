@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 from .config import ConfigStore
 from .emby import EmbyClient, EmbyError
 from .engine import MODES, Engine
+from .openlist import OpenListClient, OpenListError
 from .scheduler import Scheduler
 from .state import LogBus, Store
 
@@ -44,6 +45,7 @@ class Context:
         web_dir: Path,
         prefix: str = "",
         syncer: Any = None,
+        strmgen: Any = None,
     ):
         self.config = config
         self.store = store
@@ -51,6 +53,7 @@ class Context:
         self.engine = engine
         self.scheduler = scheduler
         self.syncer = syncer
+        self.strmgen = strmgen
         self.web_dir = Path(web_dir)
         # 统一网关前缀，例如 /app/embyprewarm；为空表示直接端口访问
         self.prefix = (prefix or "").rstrip("/")
@@ -237,6 +240,16 @@ class Handler(BaseHTTPRequestHandler):
             # 前端拿到的是打码 Token，未修改时保持原值
             if not pushplus or set(pushplus) == {"*"}:
                 notify["pushplus_token"] = current["notify"].get("pushplus_token", "")
+            # STRM 生成：OpenList 令牌 / 密码同样是打码展示，留空或全 * 表示不修改
+            strm = incoming.get("strm") or {}
+            if isinstance(strm, dict):
+                incoming["strm"] = strm
+                raw_token = str(strm.get("openlist_token") or "")
+                if not raw_token or set(raw_token) == {"*"}:
+                    strm["openlist_token"] = current["strm"].get("openlist_token", "")
+                raw_password = str(strm.get("openlist_password") or "")
+                if not raw_password or set(raw_password) == {"*"}:
+                    strm["openlist_password"] = current["strm"].get("openlist_password", "")
             saved = self.ctx.config.save(incoming)
             self.ctx.bus.info("配置已更新")
             self._json({"ok": True, "config": self.ctx.config.public(), "saved": saved})
@@ -253,6 +266,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.ctx.syncer.run_async("手动同步")
             self._json({"ok": True})
+        elif path == "/api/strm":
+            if self.ctx.strmgen is None:
+                self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
+                return
+            if self.ctx.strmgen.running:
+                self._json({"ok": False, "error": "STRM 生成正在进行中，请稍后再试"})
+                return
+            self.ctx.strmgen.run_async("手动生成")
+            self._json({"ok": True})
+        elif path == "/api/strm/stop":
+            if self.ctx.strmgen is None:
+                self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
+                return
+            self._json({"ok": self.ctx.strmgen.stop()})
+        elif path == "/api/strm/test":
+            self._json(self._test_openlist(body))
         elif path == "/api/run":
             mode = str(body.get("mode") or "full")
             if mode not in MODES:
@@ -316,6 +345,10 @@ class Handler(BaseHTTPRequestHandler):
                 "running": bool(self.ctx.syncer and self.ctx.syncer.running),
                 "last": self.ctx.store.meta_get("sync_last") or {},
             }
+            status["strm"] = {
+                "running": bool(self.ctx.strmgen and self.ctx.strmgen.running),
+                "last": self.ctx.store.meta_get("strm_last") or {},
+            }
             status["log_seq"] = self.ctx.bus.seq
             self._json(status)
         elif path == "/api/logs":
@@ -343,6 +376,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "同步正在进行中，请稍后再试"})
                 return
             self._json(self.ctx.syncer.plan())
+        elif path == "/api/strm/plan":
+            if self.ctx.strmgen is None:
+                self._json({"ok": False, "error": "STRM 生成器未初始化"}, 500)
+                return
+            if self.ctx.strmgen.running:
+                self._json({"ok": False, "error": "STRM 生成正在进行中，请稍后再试"})
+                return
+            self._json(self.ctx.strmgen.plan())
         else:
             self._json({"ok": False, "error": "接口不存在"}, 404)
 
@@ -406,6 +447,45 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "请先填写并保存 PushPlus Token"}
         ok, message = self.ctx.engine.pushplus_test(token)
         return {"ok": ok, "message": message, "error": "" if ok else message}
+
+    # ------------------------------------------------------------ OpenList 测试
+    def _test_openlist(self, body: dict[str, Any]) -> dict[str, Any]:
+        cfg = self.ctx.config.get()
+        incoming = (body.get("config") or {}).get("strm") or {}
+        url = str(incoming.get("openlist_url") or cfg["strm"].get("openlist_url") or "").strip()
+        token = str(incoming.get("openlist_token") or "")
+        if not token or set(token) == {"*"}:
+            token = cfg["strm"].get("openlist_token") or ""
+        username = str(incoming.get("openlist_username") or cfg["strm"].get("openlist_username") or "")
+        password = str(incoming.get("openlist_password") or "")
+        if not password or set(password) == {"*"}:
+            password = cfg["strm"].get("openlist_password") or ""
+        if not url:
+            return {"ok": False, "error": "请填写 OpenList 地址"}
+        try:
+            client = OpenListClient(url, token=token, username=username, password=password, timeout=20)
+            client.ensure_token()
+            me = client.me() or {}
+            raw_tasks = incoming.get("tasks") or cfg["strm"].get("tasks") or []
+            remote = ""
+            for task in raw_tasks:
+                if isinstance(task, dict) and str(task.get("remote") or "").strip():
+                    remote = str(task["remote"]).strip()
+                    break
+            probe = remote or "/"
+            entries = client.list_dir(probe)
+            dirs = sum(1 for entry in entries if entry["is_dir"])
+            return {
+                "ok": True,
+                "user": str(me.get("username") or me.get("name") or username or "已连接"),
+                "path": probe,
+                "dirs": dirs,
+                "files": len(entries) - dirs,
+                "sample": [entry["name"] for entry in entries[:6]],
+                "base_url": client.base_url,
+            }
+        except OpenListError as exc:
+            return {"ok": False, "error": str(exc)}
 
     # ------------------------------------------------------------ 连接测试
     def _test_connection(self, body: dict[str, Any]) -> dict[str, Any]:

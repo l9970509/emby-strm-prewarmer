@@ -52,6 +52,24 @@ const el = {
   histBody: $('#histBody'),
   histTotalText: $('#histTotalText'),
   btnHistRefresh: $('#btnHistRefresh'),
+  strmBadge: $('#strmBadge'),
+  btnStrmNow: $('#btnStrmNow'),
+  btnStrmSettings: $('#btnStrmSettings'),
+  btnStrmStop: $('#btnStrmStop'),
+  strmLastText: $('#strmLastText'),
+  strmReasonText: $('#strmReasonText'),
+  strmCreated: $('#strmCreated'),
+  strmUpdated: $('#strmUpdated'),
+  strmSkipped: $('#strmSkipped'),
+  strmDeleted: $('#strmDeleted'),
+  kvStrmSource: $('#kvStrmSource'),
+  kvStrmPrefix: $('#kvStrmPrefix'),
+  kvStrmNext: $('#kvStrmNext'),
+  kvStrmAfter: $('#kvStrmAfter'),
+  strmTaskList: $('#strmTaskList'),
+  strmTaskBadge: $('#strmTaskBadge'),
+  strmLog: $('#strmLog'),
+  autoScrollStrm: $('#autoScrollStrm'),
   drawer: $('#drawer'),
   drawerMask: $('#drawerMask'),
   toast: $('#toast'),
@@ -59,18 +77,19 @@ const el = {
 
 let state = {
   cfg: null,
-  logSeq: { prewarm: 0, sync: 0 },
-  logClearedAt: { prewarm: 0, sync: 0 },
+  logSeq: { prewarm: 0, sync: 0, strm: 0 },
+  logClearedAt: { prewarm: 0, sync: 0, strm: 0 },
   busy: false,
   failuresFetched: -1,
   dailyTimes: [],
   page: 'prewarm',
   historyLoadedAt: 0,
   plan: null,
+  strmPlan: null,
 };
 
 /* ------------------------------------------------------------------ 页面路由 */
-const PAGES = ['prewarm', 'sync', 'history'];
+const PAGES = ['prewarm', 'strm', 'sync', 'history'];
 
 function switchPage(name, push = true) {
   if (!PAGES.includes(name)) name = 'prewarm';
@@ -166,11 +185,12 @@ function appendLogs(box, lines, channel) {
 }
 
 async function pollLogs() {
-  for (const channel of ['prewarm', 'sync']) {
+  const boxes = { prewarm: el.log, sync: el.syncLog, strm: el.strmLog };
+  for (const channel of ['prewarm', 'sync', 'strm']) {
     try {
       const data = await api(`/api/logs?since=${state.logSeq[channel]}&channel=${channel}`);
       if (data.lines && data.lines.length) {
-        appendLogs(channel === 'sync' ? el.syncLog : el.log, data.lines, channel);
+        appendLogs(boxes[channel], data.lines, channel);
       }
     } catch (e) { /* 忽略瞬时错误 */ }
   }
@@ -304,6 +324,38 @@ function renderStatus(s) {
     }
     el.kvSyncPath.textContent = parts.join('；');
     el.kvSyncPath.title = el.kvSyncPath.textContent;
+  }
+
+  // STRM 生成（生成页）
+  const strm = s.strm || {};
+  const lastStrm = strm.last || {};
+  if (strm.running) {
+    el.strmBadge.textContent = '生成中';
+    el.strmBadge.className = 'badge ok';
+  } else {
+    el.strmBadge.textContent = lastStrm.ts ? (lastStrm.ok ? '正常' : '异常') : '未运行';
+    el.strmBadge.className = 'badge' + (lastStrm.ts ? (lastStrm.ok ? ' ok' : ' has') : '');
+  }
+  el.btnStrmNow.disabled = !!strm.running;
+  el.btnStrmStop.disabled = !strm.running;
+  el.strmLastText.textContent = lastStrm.ts_text || '—';
+  el.strmReasonText.textContent = lastStrm.ts
+    ? `触发方式：${lastStrm.reason || '—'}` +
+      (lastStrm.error ? ` · ${lastStrm.error}` : ` · 用时 ${fmtDuration(lastStrm.duration) || '—'}`)
+    : (lastStrm.error ? '上次生成出错：' + lastStrm.error : '尚未执行过生成');
+  el.strmCreated.textContent = lastStrm.ts ? fmtNum(lastStrm.created || 0) : '—';
+  el.strmUpdated.textContent = lastStrm.ts ? fmtNum(lastStrm.updated || 0) : '—';
+  el.strmSkipped.textContent = lastStrm.ts ? fmtNum(lastStrm.skipped || 0) : '—';
+  el.strmDeleted.textContent = lastStrm.ts ? fmtNum(lastStrm.deleted || 0) : '—';
+  el.kvStrmNext.textContent = s.next_strm || '—';
+  el.kvStrmNext.className = s.next_strm === '未开启' ? 'off' : 'on';
+  if (state.cfg && state.cfg.strm) {
+    el.kvStrmSource.textContent = state.cfg.strm.openlist_url || '—';
+    el.kvStrmSource.title = state.cfg.strm.openlist_url || '';
+    el.kvStrmPrefix.textContent = state.cfg.strm.prefix || '(未设置)';
+    el.kvStrmPrefix.title = state.cfg.strm.prefix || '';
+    el.kvStrmAfter.textContent = state.cfg.strm.after_generate === 'prewarm' ? '已开启' : '已关闭';
+    el.kvStrmAfter.className = state.cfg.strm.after_generate === 'prewarm' ? 'on' : 'off';
   }
 
   // 上次运行时间（预热页）
@@ -479,6 +531,10 @@ $('#btnClearSyncLog').addEventListener('click', () => {
   state.logClearedAt.sync = state.logSeq.sync;
   el.syncLog.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
 });
+$('#btnClearStrmLog').addEventListener('click', () => {
+  state.logClearedAt.strm = state.logSeq.strm;
+  el.strmLog.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
+});
 $('#btnRequeueAll').addEventListener('click', async () => {
   try {
     const res = await api('/api/failures/action', 'POST', { action: 'requeue', ids: [] });
@@ -580,7 +636,9 @@ $('#syncModalMask').addEventListener('click', (e) => {
   if (e.target === $('#syncModalMask')) closeSyncModal();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('#syncModalMask').hidden) closeSyncModal();
+  if (e.key !== 'Escape') return;
+  if (!$('#syncModalMask').hidden) closeSyncModal();
+  if (!$('#strmModalMask').hidden) closeStrmModal();
 });
 $('#planOnlyCopy').addEventListener('change', renderPlanList);
 
@@ -612,6 +670,182 @@ function openSyncSettings() {
 }
 
 el.btnSyncSettings.addEventListener('click', openSyncSettings);
+
+/* ------------------------------------------------------- STRM 生成页 */
+const STRM_ACTION_LABEL = {
+  create: '新增',
+  update: '更新',
+  skip: '跳过',
+  delete: '删除',
+  extra: '附件',
+};
+
+function renderStrmPlanList() {
+  const plan = state.strmPlan;
+  const list = $('#strmPlanList');
+  if (!plan || !plan.ok) {
+    list.innerHTML = `<div class="empty">${escapeHtml((plan && plan.error) || '读取失败')}</div>`;
+    $('#btnConfirmStrm').disabled = true;
+    return;
+  }
+  const onlyChanged = $('#strmOnlyChanged').checked;
+  const items = (plan.items || []).filter(
+    (it) => !onlyChanged || (it.action !== 'skip'),
+  );
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">没有可显示的文件</div>';
+  } else {
+    list.innerHTML = items
+      .map((it) => {
+        const tag = STRM_ACTION_LABEL[it.action] || it.action;
+        const cls = it.action === 'create' ? 'plan-copy' : it.action === 'delete' ? 'plan-del' : 'plan-skip';
+        return `<div class="plan-item">
+          <span class="plan-tag ${cls}">${tag}</span>
+          <span class="plan-path" title="${escapeHtml(it.remote || it.rel)}">${escapeHtml(it.rel)}</span>
+          <span class="plan-size">${fmtSize(it.size)}</span>
+        </div>`;
+      })
+      .join('');
+  }
+  const changed = (plan.create || 0) + (plan.update || 0) + (plan.delete || 0) + (plan.extra || 0);
+  $('#btnConfirmStrm').disabled = changed === 0;
+}
+
+function openStrmModal() {
+  const mask = $('#strmModalMask');
+  mask.hidden = false;
+  requestAnimationFrame(() => mask.classList.add('show'));
+  $('#strmPlanSummary').textContent = '正在读取网盘目录，大库可能需要一会儿…';
+  $('#strmPlanList').innerHTML = '<div class="empty">正在读取…</div>';
+  $('#btnConfirmStrm').disabled = true;
+  $('#strmOnlyChanged').checked = true;
+  api('/api/strm/plan')
+    .then((plan) => {
+      state.strmPlan = plan;
+      if (!plan.ok) {
+        $('#strmPlanSummary').textContent = '❌ ' + (plan.error || '读取失败');
+        renderStrmPlanList();
+        return;
+      }
+      if (plan.empty) {
+        $('#strmPlanSummary').textContent = '网盘与本地一致，没有需要生成的文件';
+        $('#strmPlanList').innerHTML = '<div class="empty">没有需要生成的文件</div>';
+        return;
+      }
+      const parts = [];
+      if (plan.create) parts.push(`<b class="plan-copy">新增 ${plan.create}</b>`);
+      if (plan.update) parts.push(`更新 ${plan.update}`);
+      if (plan.extra) parts.push(`附件 ${plan.extra}`);
+      if (plan.delete) parts.push(`<b class="plan-del">删除 ${plan.delete}</b>`);
+      if (plan.skipped) parts.push(`跳过 ${plan.skipped}`);
+      let text = parts.join(' · ');
+      if (plan.truncated) text += '，明细仅显示前 1000 条';
+      if (plan.errors && plan.errors.length) {
+        text += `<br><span class="muted">${escapeHtml(plan.errors[0])}</span>`;
+      }
+      $('#strmPlanSummary').innerHTML = text;
+      renderStrmPlanList();
+    })
+    .catch((e) => {
+      $('#strmPlanSummary').textContent = '❌ ' + e.message;
+    });
+}
+
+function closeStrmModal() {
+  const mask = $('#strmModalMask');
+  mask.classList.remove('show');
+  setTimeout(() => { mask.hidden = true; }, 180);
+  state.strmPlan = null;
+}
+
+function openStrmSettings() {
+  if (state.page !== 'strm') switchPage('strm');
+  const block = $('#strmSettingsBlock');
+  block.open = true;
+  block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+el.btnStrmSettings.addEventListener('click', openStrmSettings);
+$('#btnCloseStrmModal').addEventListener('click', closeStrmModal);
+$('#btnCancelStrm').addEventListener('click', closeStrmModal);
+$('#strmModalMask').addEventListener('click', (e) => {
+  if (e.target === $('#strmModalMask')) closeStrmModal();
+});
+$('#strmOnlyChanged').addEventListener('change', renderStrmPlanList);
+
+$('#btnStrmNow').addEventListener('click', () => {
+  if (!(state.cfg && state.cfg.strm && (state.cfg.strm.tasks || []).length)) {
+    toast('请先在「生成设置」中配置 OpenList 与任务目录', true);
+    openStrmSettings();
+    return;
+  }
+  openStrmModal();
+});
+
+$('#btnConfirmStrm').addEventListener('click', async () => {
+  const btn = $('#btnConfirmStrm');
+  btn.disabled = true;
+  try {
+    const res = await api('/api/strm', 'POST', {});
+    if (res.ok) {
+      closeStrmModal();
+      toast('STRM 生成已开始，可在生成日志查看进度');
+      el.strmBadge.textContent = '生成中';
+      el.strmBadge.className = 'badge ok';
+      await pollLogs();
+    } else {
+      toast(res.error || '启动失败', true);
+      btn.disabled = false;
+    }
+  } catch (e) {
+    toast(e.message, true);
+    btn.disabled = false;
+  }
+});
+
+$('#btnStrmStop').addEventListener('click', async () => {
+  try {
+    await api('/api/strm/stop', 'POST', {});
+    toast('已发送停止指令');
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+$('#btnTestOpenlist').addEventListener('click', async () => {
+  const btn = $('#btnTestOpenlist');
+  const out = $('#openlistTestResult');
+  btn.disabled = true;
+  out.className = 'test-result';
+  out.textContent = '正在连接…';
+  try {
+    const res = await api('/api/strm/test', 'POST', {
+      config: {
+        strm: {
+          openlist_url: $('#cfgOlUrl').value.trim(),
+          openlist_token: $('#cfgOlToken').value.trim(),
+          openlist_username: $('#cfgOlUser').value.trim(),
+          openlist_password: $('#cfgOlPass').value,
+          tasks: parseStrmTasks($('#cfgStrmTasks').value),
+        },
+      },
+    });
+    if (res.ok) {
+      out.className = 'test-result ok';
+      out.innerHTML =
+        `✅ 已连接「${escapeHtml(res.user)}」<br>` +
+        `${escapeHtml(res.path)} · 子目录 ${res.dirs} 个 · 文件 ${res.files} 个`;
+    } else {
+      out.className = 'test-result bad';
+      out.textContent = '❌ ' + (res.error || '连接失败');
+    }
+  } catch (e) {
+    out.className = 'test-result bad';
+    out.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 /* ------------------------------------------------------------------ 设置 */
 function openDrawer() {
@@ -686,6 +920,38 @@ function fillConfig(cfg) {
   $('#cfgSyncSched').checked = !!(cfg.sync && cfg.sync.schedule_enabled);
   $('#cfgSyncTime').value = (cfg.sync && cfg.sync.schedule_time) || '04:30';
   syncScheduleFields();
+
+  // STRM 生成
+  const strm = cfg.strm || {};
+  $('#cfgStrmEnabled').checked = !!strm.enabled;
+  $('#cfgOlUrl').value = strm.openlist_url || '';
+  $('#cfgOlToken').value = '';
+  $('#cfgOlToken').placeholder = strm.openlist_token_set ? '已配置，留空则不修改' : '留空则用账号密码登录';
+  $('#cfgOlUser').value = strm.openlist_username || '';
+  $('#cfgOlPass').value = '';
+  $('#cfgOlPass').placeholder = strm.openlist_password_set ? '已配置，留空则不修改' : '留空则不修改';
+  $('#cfgStrmPrefix').value = strm.prefix || '';
+  $('#cfgStrmTasks').value = (strm.tasks || []).map((t) => `${t.remote} = ${t.local}`).join('\n');
+  $('#cfgStrmExts').value = strm.exts || '';
+  $('#cfgStrmExtras').value = strm.extras || '';
+  $('#cfgStrmMaxMb').value = strm.max_file_mb != null ? strm.max_file_mb : 200;
+  $('#cfgStrmRebuild').checked = !!strm.rebuild;
+  $('#cfgStrmAfter').checked = (strm.after_generate || 'prewarm') !== 'none';
+  $('#cfgStrmSched').checked = !!strm.schedule_enabled;
+  $('#cfgStrmTime').value = strm.schedule_time || '02:30';
+  renderStrmTasks(strm.tasks || []);
+}
+
+function renderStrmTasks(tasks) {
+  el.strmTaskBadge.textContent = tasks.length;
+  if (!tasks.length) {
+    el.strmTaskList.innerHTML = '<li><span class="muted">尚未配置任务</span></li>';
+    return;
+  }
+  el.strmTaskList.innerHTML = tasks
+    .map((t) => `<li><span title="${escapeHtml(t.remote)}">${escapeHtml(shorten(t.remote, 22))}</span>` +
+      `<b title="${escapeHtml(t.local)}">${escapeHtml(shorten(t.local, 18))}</b></li>`)
+    .join('');
 }
 
 function renderDailyChips() {
@@ -817,7 +1083,37 @@ function collectConfig() {
       schedule_enabled: $('#cfgSyncSched').checked,
       schedule_time: $('#cfgSyncTime').value || '04:30',
     },
+    strm: {
+      enabled: $('#cfgStrmEnabled').checked,
+      openlist_url: $('#cfgOlUrl').value.trim(),
+      openlist_token: $('#cfgOlToken').value.trim(),
+      openlist_username: $('#cfgOlUser').value.trim(),
+      openlist_password: $('#cfgOlPass').value,
+      prefix: $('#cfgStrmPrefix').value.trim(),
+      tasks: parseStrmTasks($('#cfgStrmTasks').value),
+      exts: $('#cfgStrmExts').value.trim(),
+      extras: $('#cfgStrmExtras').value.trim(),
+      max_file_mb: Number($('#cfgStrmMaxMb').value) || 0,
+      rebuild: $('#cfgStrmRebuild').checked,
+      after_generate: $('#cfgStrmAfter').checked ? 'prewarm' : 'none',
+      schedule_enabled: $('#cfgStrmSched').checked,
+      schedule_time: $('#cfgStrmTime').value || '02:30',
+    },
   };
+}
+
+function parseStrmTasks(text) {
+  const tasks = [];
+  for (const line of String(text || '').split('\n')) {
+    const raw = line.trim().replace('＝', '=');
+    if (!raw) continue;
+    const idx = raw.indexOf('=');
+    if (idx <= 0) continue;
+    const remote = raw.slice(0, idx).trim();
+    const local = raw.slice(idx + 1).trim();
+    if (remote && local) tasks.push({ remote, local });
+  }
+  return tasks;
 }
 
 async function loadConfig() {
@@ -833,6 +1129,11 @@ async function saveSettings() {
   const cfg = collectConfig();
   if (!cfg.emby.url) { toast('请先在「公共设置」中填写 Emby 地址', true); openDrawer(); return; }
   if (cfg.sync.enabled && !cfg.sync.target) { toast('启用备份同步需要填写目标目录 B', true); return; }
+  if (cfg.strm.enabled) {
+    if (!cfg.strm.openlist_url) { toast('启用 STRM 生成需要填写 OpenList 地址', true); openStrmSettings(); return; }
+    if (!cfg.strm.tasks.length) { toast('请至少配置一个生成任务：网盘目录 = 本地目录', true); openStrmSettings(); return; }
+    if (!cfg.strm.prefix) { toast('请填写 STRM 前缀（OpenList /d 地址或 rclone 挂载根）', true); openStrmSettings(); return; }
+  }
   try {
     await api('/api/config', 'POST', { config: cfg });
     toast('配置已保存');
@@ -920,6 +1221,7 @@ async function runNotifyTest(channel, btn, out) {
 (async function boot() {
   el.log.innerHTML = '<div class="empty">等待预热任务…</div>';
   el.syncLog.innerHTML = '<div class="empty">等待同步任务…</div>';
+  el.strmLog.innerHTML = '<div class="empty">等待生成任务…</div>';
   switchPage(location.hash.slice(1) || 'prewarm', false);
   await loadConfig();
   await pollLogs();

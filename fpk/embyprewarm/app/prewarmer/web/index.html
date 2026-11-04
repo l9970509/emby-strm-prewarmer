@@ -32,6 +32,10 @@
         <svg viewBox="0 0 24 24" class="ic"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" fill="currentColor"/></svg>
         预热
       </a>
+      <a class="nav-tab" data-page="strm" href="#strm">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1zm1 2v12h14V6H5zm2 2h4v2H7V8zm0 4h10v2H7v-2zm0 4h7v2H7v-2z" fill="currentColor"/></svg>
+        STRM 生成
+      </a>
       <a class="nav-tab" data-page="sync" href="#sync">
         <svg viewBox="0 0 24 24" class="ic"><path d="M12 4V1L8 5l4 4V6a6 6 0 015.7 7.9l1.5 1.5A8 8 0 0012 4zm0 15.9a6 6 0 01-5.7-7.9L4.8 10.5A8 8 0 0012 20v3l4-4-4-4v2.9z" fill="currentColor"/></svg>
         备份同步
@@ -233,6 +237,157 @@
     </details>
   </section>
 
+  <!-- ============================================= STRM 生成 -->
+  <section class="page" id="page-strm">
+    <div class="sync-grid">
+      <div class="card panel sync-main">
+        <div class="panel-head">
+          <h2>生成状态</h2>
+          <span class="badge" id="strmBadge">—</span>
+        </div>
+        <div class="sync-hero">
+          <div class="sync-num">
+            <span class="sync-num-label">上次生成</span>
+            <strong class="sync-num-value" id="strmLastText">—</strong>
+            <span class="stat-hint" id="strmReasonText">尚未执行过生成</span>
+          </div>
+          <div class="sync-nums">
+            <div class="sync-cell">
+              <strong class="sync-count ok" id="strmCreated">—</strong>
+              <span>新增</span>
+            </div>
+            <div class="sync-cell">
+              <strong class="sync-count" id="strmUpdated">—</strong>
+              <span>更新</span>
+            </div>
+            <div class="sync-cell">
+              <strong class="sync-count" id="strmSkipped">—</strong>
+              <span>跳过</span>
+            </div>
+            <div class="sync-cell">
+              <strong class="sync-count danger" id="strmDeleted">—</strong>
+              <span>删除</span>
+            </div>
+          </div>
+        </div>
+        <div class="sync-ops">
+          <button class="btn primary lg" id="btnStrmNow">
+            <svg viewBox="0 0 24 24" class="ic"><path d="M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1zm1 2v12h14V6H5zm2 2h4v2H7V8zm0 4h10v2H7v-2zm0 4h7v2H7v-2z" fill="currentColor"/></svg>
+            立即生成
+          </button>
+          <button class="btn" id="btnStrmSettings">生成设置</button>
+          <button class="btn danger" id="btnStrmStop" disabled>停止</button>
+        </div>
+        <div class="sync-kv">
+          <ul class="kv">
+            <li><span>OpenList</span><b id="kvStrmSource">—</b></li>
+            <li><span>STRM 前缀</span><b id="kvStrmPrefix">—</b></li>
+            <li><span>下次定时生成</span><b id="kvStrmNext">—</b></li>
+            <li><span>生成后自动预热</span><b id="kvStrmAfter">—</b></li>
+          </ul>
+        </div>
+        <div class="live">
+          <div class="live-head">
+            <h3>生成日志</h3>
+            <div class="live-tools">
+              <label class="chk"><input type="checkbox" id="autoScrollStrm" checked><span>自动滚动</span></label>
+              <button class="link" id="btnClearStrmLog">清空显示</button>
+            </div>
+          </div>
+          <div class="log" id="strmLog"></div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card panel">
+          <div class="panel-head"><h2>闭环链路</h2></div>
+          <ul class="rule-list">
+            <li><i>1</i>OpenList 网盘目录更新 → 本地按原结构生成 <code>.strm</code></li>
+            <li><i>2</i>生成完自动触发<b>增量预热</b>，写入真实 MediaInfo</li>
+            <li><i>3</i>预热后自动导出 <code>mediainfo.json</code> 备份</li>
+            <li><i>4</i>备份再自动<b>同步</b>到备份目录 B</li>
+            <li><i>5</i>手动生成会先展示明细，确认后才写盘</li>
+          </ul>
+        </div>
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>生成任务</h2>
+            <span class="badge" id="strmTaskBadge">0</span>
+          </div>
+          <ul class="kv strm-tasks" id="strmTaskList">
+            <li><span class="muted">尚未配置任务</span></li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <!-- STRM 生成设置（折叠面板） -->
+    <details class="card panel settings-block" id="strmSettingsBlock">
+      <summary>
+        <span class="sum-title">生成设置</span>
+        <span class="sum-hint">OpenList 连接 · 任务目录 · 扩展名 · 触发方式</span>
+        <span class="sum-arrow">▾</span>
+      </summary>
+      <div class="settings-body">
+
+        <div class="group">
+          <label class="field switch-field"><span>启用 STRM 生成</span><label class="switch"><input type="checkbox" id="cfgStrmEnabled"><i></i></label></label>
+
+          <div class="grid2">
+            <label class="field"><span>OpenList 地址</span><input type="text" id="cfgOlUrl" placeholder="http://127.0.0.1:5244"></label>
+            <label class="field"><span>长期令牌（可选）</span><input type="password" id="cfgOlToken" placeholder="留空则用账号密码登录"></label>
+            <label class="field"><span>账号</span><input type="text" id="cfgOlUser" placeholder="admin"></label>
+            <label class="field"><span>密码</span><input type="password" id="cfgOlPass" placeholder="留空则不修改"></label>
+          </div>
+          <div class="test-row">
+            <button class="btn sm" type="button" id="btnTestOpenlist">测试 OpenList 连接</button>
+            <span class="test-result" id="openlistTestResult"></span>
+          </div>
+          <em class="note">令牌在 OpenList 后台「其他 → 令牌」生成；用账号密码时会自动登录换 token（不落盘）。</em>
+        </div>
+
+        <div class="group">
+          <h4>STRM 内容与前缀</h4>
+          <label class="field">
+            <span>STRM 前缀</span>
+            <input type="text" id="cfgStrmPrefix" placeholder="http://192.168.1.10:5244/d 或 /mnt/115">
+            <em>实际写入 = 前缀 + 网盘完整路径（<code>/d/115/影视/…</code>）。用 rclone 挂载就填挂载根，如 <code>/mnt</code>；支持 <code>{path}</code> 占位符。</em>
+          </label>
+          <label class="field">
+            <span>生成任务（每行 <code>网盘目录 = 本地目录</code>）</span>
+            <textarea id="cfgStrmTasks" rows="4" placeholder="/115/影视/电影 = /vol2/1000/strm/movie&#10;/115/影视/剧集 = /vol2/1000/strm/tv"></textarea>
+            <em>网盘目录是 OpenList 里的完整路径；本地目录会按网盘结构生成 <code>影片.strm</code>。</em>
+          </label>
+        </div>
+
+        <div class="group">
+          <h4>扩展名与附件</h4>
+          <label class="field"><span>媒体扩展名（逗号分隔）</span><input type="text" id="cfgStrmExts"></label>
+          <label class="field"><span>一并下载的附件扩展名（留空不下载）</span><input type="text" id="cfgStrmExtras"></label>
+          <div class="grid2">
+            <label class="field"><span>附件大小上限（MB，0=不限）</span><input type="number" id="cfgStrmMaxMb" min="0"></label>
+            <label class="field switch-field"><span>重建（删除网盘已不存在的 strm）</span><label class="switch"><input type="checkbox" id="cfgStrmRebuild"><i></i></label></label>
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>触发方式</h4>
+          <div class="grid2">
+            <label class="field switch-field"><span>生成后自动预热（闭环）</span><label class="switch"><input type="checkbox" id="cfgStrmAfter"><i></i></label></label>
+            <label class="field switch-field"><span>每天定时生成</span><label class="switch"><input type="checkbox" id="cfgStrmSched"><i></i></label></label>
+          </div>
+          <label class="field half"><span>定时生成时刻</span><input type="time" id="cfgStrmTime"></label>
+          <em class="note">建议顺序：定时生成（如 02:30）→ 自动增量预热 → 预热后自动备份同步。三步都在本工具内完成，无需外部脚本。</em>
+        </div>
+
+        <div class="group settings-actions">
+          <button class="btn primary js-save-settings" type="button">保存生成设置</button>
+        </div>
+
+      </div>
+    </details>
+  </section>
+
   <!-- ============================================= 备份同步 -->
   <section class="page" id="page-sync">
     <div class="sync-grid">
@@ -397,6 +552,27 @@
       <div class="modal-btns">
         <button class="btn ghost" id="btnCancelSync">取消</button>
         <button class="btn primary" id="btnConfirmSync">确认同步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================= STRM 生成预览弹窗 -->
+<div class="modal-mask" id="strmModalMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h3>本次将生成的文件</h3>
+      <button class="icon-btn" id="btnCloseStrmModal" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-sub" id="strmPlanSummary">正在读取网盘目录…</div>
+    <div class="modal-body" id="strmPlanList">
+      <div class="empty">正在读取…</div>
+    </div>
+    <div class="modal-foot">
+      <label class="chk"><input type="checkbox" id="strmOnlyChanged"><span>只看将生成/更新的</span></label>
+      <div class="modal-btns">
+        <button class="btn ghost" id="btnCancelStrm">取消</button>
+        <button class="btn primary" id="btnConfirmStrm">确认生成</button>
       </div>
     </div>
   </div>

@@ -24,11 +24,12 @@ def fmt_ts(ts: float | None) -> str:
 class LogBus:
     """环形日志缓冲 + 落盘，供面板轮询增量拉取。
 
-    支持双通道：prewarm（预热）/ sync（备份同步），面板分别展示。
+    支持三通道：prewarm（预热）/ sync（备份同步）/ strm（STRM 生成），面板分别展示。
     """
 
     PREWARM = "prewarm"
     SYNC = "sync"
+    STRM = "strm"
 
     def __init__(self, path: Path, maxlen: int = 4000, max_bytes: int = 10 * 1024 * 1024, console: bool = False):
         self.path = Path(path)

@@ -26,6 +26,7 @@
 | 失败循环预热   | 运行内多轮重试 + 失败队列持久化 + 后台按指数退避持续重试 + 单项手动预热                        |
 | 媒体信息备份   | 预热成功后自动在 .strm 同目录导出 `{filename}-mediainfo.json`；另有全库补导出模式      |
 | 备份同步     | 把备份的 mediainfo.json 同步到独立备份目录，先对比后复制、支持图片字幕、手动/预热后/定时三种触发        |
+| STRM 生成    | 从 OpenList 网盘目录按原结构生成 .strm，增量对比、可选下载 nfo/字幕/海报、重建清理、手动/定时触发        |
 | Web 管理面板 | 三页面布局（预热 / 备份同步 / 任务记录），状态统计、双通道实时日志、进度条、失败队列管理、在线改配置           |
 | 扫描预览     | 只列出待预热项目，不实际执行（dry-run）                                         |
 | 完成通知     | PushPlus（微信）与通用 Webhook，推送开始时间/时长/条目明细/成功失败数；均提供发送测试按钮          |
@@ -35,6 +36,7 @@
 面板按功能分为三个页面，通过顶部导航切换：
 
 - **预热**：统计卡片、任务控制、预热日志、失败队列、定时与循环状态；「预热设置」折叠面板收纳全部预热相关配置
+- **STRM 生成**：OpenList 网盘目录 → 本地 .strm，生成状态、预览确认、生成日志、生成设置
 - **备份同步**：同步状态与上次结果、立即同步（先展示同步明细确认后才执行）、同步日志；「同步设置」折叠面板
 - **任务记录**：全部任务历史（开始时间/类型/条目/成功失败/备份/时长）
 
@@ -76,6 +78,21 @@
   两边完全一致时不打扰
 - **日志独立**：同步日志与预热日志分开展示在各自页面
 
+## STRM 生成（OpenList 网盘 → 本地 strm）
+
+参考 [OpenStrm](https://github.com/indown/OpenStrm) 的「前缀 + 远端路径」方案实现：
+
+- **连接**：OpenList 地址 + 长期令牌（后台「其他 → 令牌」），或账号密码自动登录；提供「测试 OpenList 连接」按钮
+- **STRM 前缀**：`http://IP:5244/d`（Emby 可直连 OpenList 时）或 rclone/CloudDrive2 挂载根（如 `/mnt`）；
+  实际写入 = 前缀 + 网盘完整路径，路径按 URL 规则转义
+- **任务**：每行 `网盘目录 = 本地目录`，可配多个；本地按网盘结构生成 `影片.strm`
+- **增量**：本地已存在且内容一致的 strm 跳过，不重复写盘；改前缀后内容变化会自动更新
+- **附件**：可按扩展名一并下载 nfo / 字幕 / 海报等小文件（有大小上限保护）
+- **重建**：开启后删除网盘已不存在的本地 strm（防网盘清理后残留死链）
+- **触发**：手动（先预览明细确认）/ 每天定时 / 生成后自动预热
+- **闭环**：生成 → 自动增量预热 → 自动导出备份 → 自动同步目录 B，一气呵成
+- **命令行**：`python3 run.py strm`
+
 ## 消息通知（PushPlus / Webhook）
 
 预热与备份同步任务结束时推送（开始时间、持续时长、条目明细、成功/失败数量）。
@@ -91,10 +108,10 @@
 
 ### 方式一：fpk 应用包（推荐，飞牛原生）
 
-使用应用中心「手动安装」选择 `embyprewarm-1.6.3.fpk`，或在 SSH 里执行：
+使用应用中心「手动安装」选择 `embyprewarm-1.7.0.fpk`，或在 SSH 里执行：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.6.3.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.7.0.fpk
 ```
 
 fpk 版本的特点：
@@ -214,6 +231,7 @@ python3 run.py once     # 命令行执行一次全量增量预热
 python3 run.py retry    # 只重试失败队列
 python3 run.py export   # 为已有媒体信息的旧影片批量补导出备份
 python3 run.py scan     # 只扫描统计，列出待预热项目
+python3 run.py strm     # 从 OpenList 网盘生成 STRM（增量）
 python3 run.py test     # 测试 Emby 连接
 ```
 
@@ -238,6 +256,8 @@ emby-prewarmer/
 │   ├── mediainfo.py        # mediainfo.json 备份导出（StrmTool 兼容格式）
 │   ├── scheduler.py        # 定时调度器（预热/重试/入库监听/定时同步）
 │   ├── syncer.py           # 备份同步：plan 预览/对比复制/明细收集
+│   ├── strmgen.py          # STRM 生成：OpenList 遍历/增量对比/附件下载/重建
+│   ├── openlist.py         # OpenList（AList 兼容）API 客户端（纯标准库）
 │   ├── state.py            # 失败队列/指纹/历史/日志总线（预热与同步双通道）
 │   ├── bootstrap.py        # 安装向导配置接入（roots 保护）
 │   └── web.py              # HTTP 服务与 REST API（含同步预览/测试通知接口）

@@ -17,19 +17,21 @@ from .state import LogBus, Store, fmt_ts
 
 
 class Scheduler(threading.Thread):
-    def __init__(self, config: ConfigStore, engine: Engine, store: Store, bus: LogBus, syncer=None):
+    def __init__(self, config: ConfigStore, engine: Engine, store: Store, bus: LogBus, syncer=None, strmgen=None):
         super().__init__(daemon=True, name="scheduler")
         self.config = config
         self.engine = engine
         self.store = store
         self.bus = bus
         self.syncer = syncer
+        self.strmgen = strmgen
         self._stop = threading.Event()
         self._was_busy = False
         self._next_schedule: float | None = None
         self._next_retry: float | None = None
         self._next_watch: float | None = None
         self._next_sync: float | None = None
+        self._next_strm: float | None = None
         self._last_watch_trigger = 0.0
         self._watch_poke = threading.Event()   # webhook 唤醒标志（防抖合并）
 
@@ -73,6 +75,23 @@ class Scheduler(threading.Thread):
         else:
             self._next_sync = None
 
+        # ---- 定时 STRM 生成（网盘 → strm，与预热/同步互不阻塞）
+        strm_cfg = cfg.get("strm") or {}
+        if self.strmgen is not None and strm_cfg.get("enabled") and strm_cfg.get("schedule_enabled"):
+            last_strm = float(self.store.meta_get("strm_last_ts") or 0)
+            self._next_strm = self._compute_next_schedule(
+                {"mode": "daily", "daily_times": [strm_cfg.get("schedule_time") or "02:30"]},
+                last_strm,
+                now,
+            )
+            if now >= self._next_strm:
+                self.store.meta_set("strm_last_ts", now)
+                self.store.save()
+                self.bus.info("⏰ 定时 STRM 生成触发", LogBus.STRM)
+                self.strmgen.run_async("定时生成")
+        else:
+            self._next_strm = None
+
         # 任务刚结束 → 重置自动重试计时，避免立刻又触发
         if self._was_busy and not self.engine.busy():
             self.store.meta_set("retry_last_ts", now)
@@ -81,6 +100,14 @@ class Scheduler(threading.Thread):
 
         if self.engine.busy():
             return
+
+        # ---- STRM 生成后排队等待的自动预热（生成时预热正忙则在这里补执行）
+        if self.store.meta_get("strm_pending_prewarm") and cfg["emby"].get("token"):
+            self.store.meta_set("strm_pending_prewarm", False)
+            self.store.save()
+            if self.engine.start("full"):
+                self.bus.info("🔥 STRM 已就绪，空闲后自动开始增量预热", LogBus.STRM)
+                return
 
         schedule = cfg["schedule"]
         last_run = float(self.store.meta_get("schedule_last_ts") or 0)
@@ -237,12 +264,25 @@ class Scheduler(threading.Thread):
             return "即将执行"
         return fmt_ts(ts)
 
+    def next_strm_text(self) -> str:
+        cfg = self.config.get()
+        strm = cfg.get("strm") or {}
+        if not strm.get("enabled") or not strm.get("schedule_enabled"):
+            return "未开启"
+        ts = self._next_strm
+        if ts is None:
+            return "待计算"
+        if ts <= time.time():
+            return "即将执行"
+        return fmt_ts(ts)
+
     def info(self) -> dict[str, Any]:
         cfg = self.config.get()
         loop = cfg["failure_loop"]
         watch = cfg["watch"]
         hook = cfg["hook"]
         sync = cfg.get("sync") or {}
+        strm = cfg.get("strm") or {}
         return {
             "schedule_enabled": cfg["schedule"]["enabled"],
             "schedule_mode": cfg["schedule"]["mode"],
@@ -256,4 +296,6 @@ class Scheduler(threading.Thread):
             "hook_token_set": bool(hook["token"]),
             "sync_enabled": bool(sync.get("enabled")),
             "next_sync": self.next_sync_text(),
+            "strm_enabled": bool(strm.get("enabled")),
+            "next_strm": self.next_strm_text(),
         }

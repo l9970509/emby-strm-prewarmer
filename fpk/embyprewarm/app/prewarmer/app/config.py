@@ -92,6 +92,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "port": 8787,
         "password": "",
     },
+    "strm": {
+        # STRM 生成：从 OpenList（AList 兼容）网盘目录同步出 .strm 文件，
+        # 生成完成后可自动触发增量预热，与备份同步串成闭环
+        "enabled": False,
+        "openlist_url": "http://127.0.0.1:5244",
+        # 长期令牌（OpenList 后台 → 其他 → 令牌）；留空则用账号密码登录换 token
+        "openlist_token": "",
+        "openlist_username": "",
+        "openlist_password": "",
+        # strm 内容前缀：OpenList 的 http://IP:5244/d 或 rclone 挂载点，
+        # 实际写入 = 前缀 + 网盘完整路径；支持 {path} 占位符
+        "prefix": "",
+        # 同步任务：[{remote: "/115/影视", local: "/vol2/1000/strm"}]
+        "tasks": [],
+        "exts": "mkv,mp4,ts,m2ts,iso,avi,wmv,mov,flv,rmvb,webm,mpg,mpeg",
+        # 一并下载的附件扩展名（nfo/字幕/海报），留空表示不下载
+        "extras": "nfo,srt,ass,ssa,sub,sup,vtt,jpg,jpeg,png,webp",
+        "max_file_mb": 200,          # 附件下载大小上限
+        "rebuild": False,            # 重建：删除网盘已不存在的本地 strm
+        "after_generate": "prewarm",  # prewarm | none（生成后自动预热）
+        "schedule_enabled": False,   # 每天定时生成
+        "schedule_time": "02:30",
+    },
     "notify": {
         "webhook_url": "",
         # PushPlus（pushplus.plus）推送 Token，留空不启用
@@ -115,6 +138,7 @@ CLAMPS: dict[str, tuple[float, float]] = {
     "failure_loop.auto_retry_interval_seconds": (60, 86400),
     "failure_loop.max_attempts": (0, 100),
     "server.port": (1, 65535),
+    "strm.max_file_mb": (0, 4096),
 }
 
 
@@ -243,6 +267,49 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
         sync_cfg["schedule_time"] = f"{hour:02d}:{minute:02d}"
     except (ValueError, IndexError):
         sync_cfg["schedule_time"] = "04:30"
+
+    # ---------------------------------------------------------- STRM 生成
+    strm_cfg = cfg["strm"]
+    strm_cfg["openlist_url"] = (strm_cfg.get("openlist_url") or "").strip().rstrip("/")
+    strm_cfg["openlist_token"] = (strm_cfg.get("openlist_token") or "").strip()
+    strm_cfg["openlist_username"] = (strm_cfg.get("openlist_username") or "").strip()
+    strm_cfg["prefix"] = (strm_cfg.get("prefix") or "").strip().rstrip("/")
+    strm_cfg["after_generate"] = (
+        "none" if str(strm_cfg.get("after_generate") or "").strip().lower() == "none" else "prewarm"
+    )
+    raw_strm_time = str(strm_cfg.get("schedule_time") or "02:30").strip().replace("：", ":")
+    parts = raw_strm_time.split(":")
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+        strm_cfg["schedule_time"] = f"{hour:02d}:{minute:02d}"
+    except (ValueError, IndexError):
+        strm_cfg["schedule_time"] = "02:30"
+
+    # 同步任务：兼容 [{remote, local}] 与 "remote = local" 两种写法
+    raw_tasks = (user_cfg or {}).get("strm", {}).get("tasks")
+    tasks: list[dict[str, str]] = []
+    if isinstance(raw_tasks, str):
+        raw_tasks = [line for line in raw_tasks.splitlines() if line.strip()]
+    if isinstance(raw_tasks, list):
+        for item in raw_tasks:
+            remote = local = ""
+            if isinstance(item, dict):
+                remote = str(item.get("remote") or "").strip()
+                local = str(item.get("local") or "").strip()
+            elif isinstance(item, str):
+                line = item.strip().replace("＝", "=")
+                if "=" in line:
+                    remote, local = (part.strip() for part in line.split("=", 1))
+                elif "|" in line:
+                    remote, local = (part.strip() for part in line.split("|", 1))
+            if not remote or not local:
+                continue
+            if not remote.startswith("/"):
+                remote = "/" + remote
+            tasks.append({"remote": remote.rstrip("/") or "/", "local": local.rstrip("/")})
+    strm_cfg["tasks"] = tasks
     return cfg
 
 
@@ -294,4 +361,11 @@ class ConfigStore:
         pushplus = cfg["notify"].get("pushplus_token") or ""
         cfg["notify"]["pushplus_token_set"] = bool(pushplus)
         cfg["notify"]["pushplus_token"] = ("*" * 8 + pushplus[-4:]) if len(pushplus) > 8 else ("*" * len(pushplus))
+        strm = cfg["strm"]
+        ol_token = strm.get("openlist_token") or ""
+        strm["openlist_token_set"] = bool(ol_token)
+        strm["openlist_token"] = ("*" * 8 + ol_token[-4:]) if len(ol_token) > 8 else ("*" * len(ol_token))
+        ol_password = strm.get("openlist_password") or ""
+        strm["openlist_password_set"] = bool(ol_password)
+        strm["openlist_password"] = "" if not ol_password else "*" * 8
         return cfg

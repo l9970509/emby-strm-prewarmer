@@ -948,6 +948,87 @@ class Engine:
             lines.append(f"<br><b>说明</b>：{html.escape(str(entry['note']))}")
         return "<br>".join(lines)
 
+    # ---------------------------------------------------- STRM 生成通知
+    def notify_strm(self, result: dict[str, Any], details: list[dict[str, str]]) -> None:
+        """STRM 生成完成通知：只在有新增/更新/删除时推送。"""
+        changed = int(result.get("created") or 0) + int(result.get("updated") or 0) + int(result.get("deleted") or 0)
+        if changed <= 0:
+            return
+        cfg = self.config.get()
+        notify = cfg.get("notify", {}) or {}
+        url = (notify.get("webhook_url") or "").strip()
+        token = (notify.get("pushplus_token") or "").strip()
+        if not url and not token:
+            return
+        started = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(float(result.get("ts") or time.time()) - float(result.get("duration") or 0)),
+        )
+        entry = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "started": started,
+            "mode": f"STRM 生成（{result.get('reason') or '手动'}）",
+            "created": int(result.get("created") or 0),
+            "updated": int(result.get("updated") or 0),
+            "skipped": int(result.get("skipped") or 0),
+            "deleted": int(result.get("deleted") or 0),
+            "failed": int(result.get("failed") or 0),
+            "duration": result.get("duration") or 0,
+            "note": result.get("note") or result.get("error") or "",
+        }
+        if url:
+            payload = {
+                "title": "Emby STRM 生成完成",
+                "type": "strm",
+                "text": (
+                    f"开始时间：{started}\n"
+                    f"触发方式：{entry['mode']}\n持续时长：{self._duration_text(entry['duration'])}\n"
+                    f"新增 {entry['created']} · 更新 {entry['updated']} · 跳过 {entry['skipped']}"
+                    f" · 删除 {entry['deleted']} · 失败 {entry['failed']}\n"
+                    f"说明：{entry['note']}"
+                ),
+                **entry,
+                "details": details,
+            }
+            try:
+                request = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(request, timeout=10).read()
+                self.bus.ok("STRM 生成 Webhook 通知已发送", LogBus.STRM)
+            except Exception as exc:
+                self.bus.warn(f"STRM 生成 Webhook 通知推送失败：{exc}", LogBus.STRM)
+        if token:
+            title = f"Emby STRM 生成完成：新增 {entry['created']} 个" + (
+                f" / 更新 {entry['updated']}" if entry["updated"] else ""
+            )
+            self._push_plus(token, title, self._strm_pushplus_content(entry, details))
+
+    @classmethod
+    def _strm_pushplus_content(cls, entry: dict[str, Any], details: list[dict[str, str]]) -> str:
+        lines = [
+            f"<b>开始时间</b>：{html.escape(str(entry.get('started') or ''))}",
+            f"<b>持续时长</b>：{cls._duration_text(entry.get('duration'))}",
+            f"<b>任务类型</b>：{html.escape(str(entry.get('mode') or ''))}",
+            f"<b>新增 / 更新 / 跳过</b>：<span style=\"color:#15a05a\">{int(entry.get('created') or 0)}</span> / "
+            f"{int(entry.get('updated') or 0)} / {int(entry.get('skipped') or 0)}",
+        ]
+        if entry.get("deleted"):
+            lines.append(f"<b>删除</b>：{int(entry['deleted'])} 个（网盘已不存在）")
+        if details:
+            lines.append("<br><b>生成明细</b>")
+            for index, item in enumerate(details, 1):
+                rel = html.escape(str(item.get("rel") or item.get("name") or ""))
+                action = str(item.get("action") or "")
+                mark = {"create": "🆕", "update": "♻️", "extra": "⤓"}.get(action, "✅")
+                lines.append(f"{index}. {mark} {rel}")
+        if entry.get("note"):
+            lines.append(f"<br><b>说明</b>：{html.escape(str(entry['note']))}")
+        return "<br>".join(lines)
+
     def webhook_test(self, url: str) -> tuple[bool, str]:
         """向指定 Webhook 地址推送一条测试消息（面板"Webhook 测试"用）。"""
         url = (url or "").strip()
