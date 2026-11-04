@@ -28,7 +28,7 @@ config.local.json
 
 # ---- 安装包：只保留当前版本 ----
 embyprewarm-*.fpk
-!embyprewarm-1.6.2.fpk
+!embyprewarm-1.6.3.fpk
 *.zip
 
 # ---- 第三方打包工具 ----

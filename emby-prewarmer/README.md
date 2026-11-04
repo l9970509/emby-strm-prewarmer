@@ -91,10 +91,10 @@
 
 ### 方式一：fpk 应用包（推荐，飞牛原生）
 
-使用应用中心「手动安装」选择 `embyprewarm-1.6.2.fpk`，或在 SSH 里执行：
+使用应用中心「手动安装」选择 `embyprewarm-1.6.3.fpk`，或在 SSH 里执行：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.6.2.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.6.3.fpk
 ```
 
 fpk 版本的特点：
