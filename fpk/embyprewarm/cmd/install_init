@@ -1,0 +1,30 @@
+#!/bin/bash
+# 安装前检查：确保系统有可用的 Python 3
+
+PY_OK=0
+if command -v python3 >/dev/null 2>&1; then
+    PY_OK=1
+fi
+
+if [ "${PY_OK}" != "1" ]; then
+    if [ "$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1; then
+        echo "未检测到 python3，尝试自动安装…"
+        apt-get update -qq >>"${TRIM_TEMP_LOGFILE}" 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 >>"${TRIM_TEMP_LOGFILE}" 2>&1
+        if command -v python3 >/dev/null 2>&1; then
+            PY_OK=1
+        fi
+    fi
+fi
+
+if [ "${PY_OK}" != "1" ]; then
+    echo "本应用需要 Python 3（3.8 及以上），当前系统未找到 python3。请先在应用中心安装 Python3 运行时后重新安装。" >"${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+    echo "Python 版本过低（当前 $(python3 -V 2>&1)），本应用需要 3.8 及以上。" >"${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+exit 0

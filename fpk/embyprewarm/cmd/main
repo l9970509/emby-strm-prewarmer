@@ -1,0 +1,194 @@
+#!/bin/bash
+# Emby 媒体信息预热 —— 服务启停控制
+
+APP_DIR="${TRIM_APPDEST}/prewarmer"
+CONF="${TRIM_PKGETC}/config.json"
+VAR_DIR="${TRIM_PKGVAR}"
+LOG_DIR="${VAR_DIR}/logs"
+SERVICE_LOG="${LOG_DIR}/service.log"
+PID_FILE="${VAR_DIR}/app.pid"
+# 飞牛统一网关：socket 必须放在 target 目录下，入口走 /app/<appname>
+SOCK="${TRIM_APPDEST}/app.sock"
+PREFIX="/app/embyprewarm"
+# 仅作为配置文件里的默认值保留（网关模式下不再监听端口）
+PORT="8799"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${SERVICE_LOG}"
+}
+
+running_pid() {
+    [ -r "${PID_FILE}" ] || return 1
+    local pid
+    pid=$(head -n 1 "${PID_FILE}" 2>/dev/null | tr -d ' \t\r\n')
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+    echo "${pid}"
+}
+
+status_app() {
+    if running_pid >/dev/null; then
+        return 0
+    fi
+    # PID 文件丢失但进程仍在（例如应用中心异常重启过脚本）
+    if command -v pgrep >/dev/null 2>&1 && pgrep -f "${APP_DIR}/run.py serve" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+start_app() {
+    if status_app; then
+        log_msg "already running"
+        return 0
+    fi
+
+    mkdir -p "${LOG_DIR}" "${VAR_DIR}" "${TRIM_PKGETC}"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "未找到 python3，请先在系统中安装 Python 3（应用中心 -> Python3 运行时）后重试。" > "${TRIM_TEMP_LOGFILE}"
+        log_msg "python3 not found"
+        return 1
+    fi
+
+    if [ ! -f "${CONF}" ]; then
+        log_msg "config missing, generating default config"
+        python3 "${APP_DIR}/app/bootstrap.py" --config "${CONF}" --port "${PORT}" >> "${SERVICE_LOG}" 2>&1
+    fi
+
+    # socket 落在 target 目录，需对应用用户可写
+    if [ ! -w "${TRIM_APPDEST}" ]; then
+        chmod 0755 "${TRIM_APPDEST}" 2>/dev/null || true
+    fi
+    if [ ! -w "${TRIM_APPDEST}" ]; then
+        echo "应用目录不可写，无法创建网关 Socket：${TRIM_APPDEST}" > "${TRIM_TEMP_LOGFILE}"
+        log_msg "target dir not writable: ${TRIM_APPDEST}"
+        return 1
+    fi
+    rm -f "${SOCK}"
+
+    local launcher=""
+    if command -v setsid >/dev/null 2>&1; then
+        launcher="setsid"
+    fi
+
+    log_msg "starting: socket=${SOCK} prefix=${PREFIX} app=${APP_DIR}"
+    cd "${APP_DIR}" || return 1
+    PREWARM_DATA_DIR="${VAR_DIR}" \
+    PREWARM_LOG_DIR="${LOG_DIR}" \
+    PYTHONUNBUFFERED=1 \
+    ${launcher} python3 "${APP_DIR}/run.py" serve \
+        --config "${CONF}" \
+        --data-dir "${VAR_DIR}" \
+        --log-dir "${LOG_DIR}" \
+        --socket "${SOCK}" \
+        --prefix "${PREFIX}" >> "${SERVICE_LOG}" 2>&1 &
+
+    echo "$!" > "${PID_FILE}"
+
+    # 等 socket 就绪（最多 15 秒）
+    local i
+    for i in $(seq 1 30); do
+        if [ -S "${SOCK}" ]; then
+            chmod 0666 "${SOCK}" 2>/dev/null || true
+            log_msg "started pid=$(cat "${PID_FILE}" 2>/dev/null) socket=${SOCK}"
+            return 0
+        fi
+        if ! running_pid >/dev/null; then
+            break
+        fi
+        sleep 0.5
+    done
+
+    # socket 未就绪：可能是 fnOS 版本过旧，回退端口模式再试一次
+    log_msg "socket 未就绪，尝试端口模式兜底"
+    stop_app >/dev/null 2>&1
+    if start_app_port_fallback; then
+        return 0
+    fi
+
+    echo "服务启动失败，请查看日志：${SERVICE_LOG}" > "${TRIM_TEMP_LOGFILE}"
+    log_msg "start failed, see ${SERVICE_LOG}"
+    stop_app >/dev/null 2>&1
+    return 1
+}
+
+# 端口模式兜底：fnOS 版本过旧不支持统一网关时，仍可用 http://NAS:8799 访问
+start_app_port_fallback() {
+    local launcher=""
+    if command -v setsid >/dev/null 2>&1; then
+        launcher="setsid"
+    fi
+    log_msg "回退端口模式: 0.0.0.0:${PORT}"
+    cd "${APP_DIR}" || return 1
+    PREWARM_DATA_DIR="${VAR_DIR}" \
+    PREWARM_LOG_DIR="${LOG_DIR}" \
+    PYTHONUNBUFFERED=1 \
+    ${launcher} python3 "${APP_DIR}/run.py" serve \
+        --config "${CONF}" \
+        --data-dir "${VAR_DIR}" \
+        --log-dir "${LOG_DIR}" \
+        --host 0.0.0.0 \
+        --port "${PORT}" >> "${SERVICE_LOG}" 2>&1 &
+
+    echo "$!" > "${PID_FILE}"
+    sleep 2
+    if running_pid >/dev/null; then
+        log_msg "started (port fallback) pid=$(cat "${PID_FILE}" 2>/dev/null)"
+        return 0
+    fi
+    return 1
+}
+
+stop_app() {
+    local pid
+    pid=$(running_pid) || {
+        rm -f "${PID_FILE}" "${SOCK}"
+        log_msg "not running"
+        return 0
+    }
+
+    log_msg "stopping pid=${pid}"
+    kill -TERM "${pid}" 2>/dev/null
+
+    local count=0
+    while kill -0 "${pid}" 2>/dev/null && [ "${count}" -lt 15 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+
+    if kill -0 "${pid}" 2>/dev/null; then
+        log_msg "force kill pid=${pid}"
+        kill -KILL "${pid}" 2>/dev/null
+    fi
+
+    rm -f "${PID_FILE}" "${SOCK}"
+    log_msg "stopped"
+    return 0
+}
+
+case "$1" in
+start)
+    start_app
+    exit $?
+    ;;
+restart)
+    stop_app
+    start_app
+    exit $?
+    ;;
+stop)
+    stop_app
+    exit $?
+    ;;
+status)
+    if status_app; then
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    echo "不支持的操作：$1" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+    ;;
+esac

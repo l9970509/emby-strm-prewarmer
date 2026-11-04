@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emby 媒体信息预热</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <div class="logo"><img src="logo.png" alt="logo" draggable="false"></div>
+      <div class="brand-text">
+        <h1>Emby 媒体信息预热</h1>
+        <p>STRM MediaInfo Prewarmer</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="pill" id="pillConn"><i class="dot"></i><span id="connText">检测中</span></span>
+      <button class="btn ghost icon-setting" id="btnOpenSettings" title="设置">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2V21a2 2 0 11-4 0v-.1A1.7 1.7 0 006 19.4l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 003 13.7H3a2 2 0 110-4h.1A1.7 1.7 0 004.6 6l-.1-.1a2 2 0 112.8-2.8l.1.1A1.7 1.7 0 0010 3.4V3a2 2 0 114 0v.1A1.7 1.7 0 0016.9 4.6l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span class="setting-text">设置</span>
+      </button>
+    </div>
+  </div>
+  <div class="wrap">
+    <nav class="nav-tabs" id="navTabs">
+      <a class="nav-tab active" data-page="prewarm" href="#prewarm">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" fill="currentColor"/></svg>
+        预热
+      </a>
+      <a class="nav-tab" data-page="sync" href="#sync">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M12 4V1L8 5l4 4V6a6 6 0 015.7 7.9l1.5 1.5A8 8 0 0012 4zm0 15.9a6 6 0 01-5.7-7.9L4.8 10.5A8 8 0 0012 20v3l4-4-4-4v2.9z" fill="currentColor"/></svg>
+        备份同步
+      </a>
+      <a class="nav-tab" data-page="history" href="#history">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M13 3a9 9 0 00-9 9H1l3.9 3.9L9 12H6a7 7 0 117 7 6.9 6.9 0 01-4.9-2l-1.4 1.4A8.9 8.9 0 0013 21a9 9 0 000-18zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12z" fill="currentColor"/></svg>
+        任务记录
+        <span class="nav-badge" id="navFailBadge" hidden></span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============================================= 预热 -->
+  <section class="page active" id="page-prewarm">
+    <section class="stats">
+      <div class="card stat">
+        <span class="stat-label">STRM 条目</span>
+        <strong class="stat-value" id="stTotal">—</strong>
+        <span class="stat-hint" id="stTotalHint">等待扫描</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">已完整</span>
+        <strong class="stat-value ok" id="stComplete">—</strong>
+        <span class="stat-hint">已有真实 MediaInfo</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">待预热</span>
+        <strong class="stat-value accent" id="stPending">—</strong>
+        <span class="stat-hint">缺少分辨率/编码信息</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">失败队列</span>
+        <strong class="stat-value danger" id="stFailed">0</strong>
+        <span class="stat-hint" id="stFailedHint">无失败项目</span>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="card panel main-panel">
+        <div class="panel-head">
+          <h2>任务控制</h2>
+          <span class="muted" id="lastRunText"></span>
+        </div>
+        <div class="actions">
+          <button class="btn primary lg" id="btnRun">
+            <svg viewBox="0 0 24 24" class="ic"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" fill="currentColor"/></svg>
+            一键预热
+          </button>
+          <button class="btn" id="btnRetryFailed">仅重试失败</button>
+          <button class="btn" id="btnExport" title="为已有 MediaInfo 但缺少 json 的条目补导出备份">导出备份</button>
+          <button class="btn" id="btnScan">扫描预览</button>
+          <button class="btn danger" id="btnStop" disabled>停止</button>
+        </div>
+        <div class="progress-block">
+          <div class="progress-head">
+            <span id="phaseText" class="phase">空闲</span>
+            <span id="counterText" class="muted">—</span>
+          </div>
+          <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+          <div class="progress-foot">
+            <span class="muted" id="elapsedText"></span>
+            <span class="muted" id="activeText"></span>
+          </div>
+        </div>
+        <div class="live">
+          <div class="live-head">
+            <h3>预热日志</h3>
+            <div class="live-tools">
+              <label class="chk"><input type="checkbox" id="autoScroll" checked><span>自动滚动</span></label>
+              <button class="link" id="btnClearLog">清空显示</button>
+            </div>
+          </div>
+          <div class="log" id="log"></div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>失败队列</h2>
+            <span class="badge" id="failBadge">0</span>
+          </div>
+          <p class="panel-tip">失败项目会自动按指数退避循环预热，也可手动重新排队。</p>
+          <div class="mini-actions">
+            <button class="btn sm" id="btnRequeueAll">全部重新排队</button>
+            <button class="btn sm ghost" id="btnClearFailures">清空</button>
+          </div>
+          <ul class="fail-list" id="failList">
+            <li class="empty">暂无失败项目</li>
+          </ul>
+        </div>
+
+        <div class="card panel">
+          <div class="panel-head"><h2>定时与循环</h2></div>
+          <ul class="kv">
+            <li><span>定时预热</span><b id="kvSchedEnabled">—</b></li>
+            <li><span>下次预热</span><b id="kvNextRun">—</b></li>
+            <li><span>新片入库监听</span><b id="kvWatch">—</b></li>
+            <li><span>入库通知</span><b id="kvHook">—</b></li>
+            <li><span>失败自动重试</span><b id="kvRetryEnabled">—</b></li>
+            <li><span>下次重试</span><b id="kvNextRetry">—</b></li>
+          </ul>
+        </div>
+      </aside>
+    </section>
+
+    <!-- 预热设置（折叠面板） -->
+    <details class="card panel settings-block" id="prewarmSettings">
+      <summary>
+        <span class="sum-title">预热设置</span>
+        <span class="sum-hint">预热参数 · 备份导出 · 定时 · 新片监听 · 失败循环</span>
+        <span class="sum-arrow">▾</span>
+      </summary>
+      <div class="settings-body">
+
+        <div class="group">
+          <h4>预热参数</h4>
+          <div class="grid2">
+            <label class="field"><span>并发数</span><input type="number" id="cfgConcurrency" min="1" max="8"></label>
+            <label class="field"><span>项目间隔（秒）</span><input type="number" id="cfgDelay" step="0.5" min="0"></label>
+            <label class="field"><span>单项重试次数</span><input type="number" id="cfgRetries" min="0" max="10"></label>
+            <label class="field"><span>重试间隔（秒）</span><input type="number" id="cfgRetryDelay" min="0"></label>
+            <label class="field"><span>单次上限（0=不限）</span><input type="number" id="cfgMaxItems" min="0"></label>
+            <label class="field switch-field"><span>预热后校验</span><label class="switch"><input type="checkbox" id="cfgVerify"><i></i></label></label>
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>媒体信息备份</h4>
+          <label class="field switch-field"><span>预热完成后自动导出 mediainfo.json</span><label class="switch"><input type="checkbox" id="cfgExportEnabled"><i></i></label></label>
+          <label class="field switch-field"><span>覆盖已存在的同名备份</span><label class="switch"><input type="checkbox" id="cfgExportOverwrite"><i></i></label></label>
+          <em class="note">
+            备份文件名 <code>{filename}-mediainfo.json</code>，与 .strm 同目录，
+            格式与 StrmTool 兼容，可用于日后「恢复媒体信息」。STRM 换源时会自动覆盖旧备份。
+          </em>
+        </div>
+
+        <div class="group">
+          <h4>定时预热</h4>
+          <label class="field switch-field"><span>启用定时预热</span><label class="switch"><input type="checkbox" id="cfgSchedEnabled"><i></i></label></label>
+          <div class="grid2">
+            <label class="field"><span>模式</span>
+              <select id="cfgSchedMode">
+                <option value="interval">固定间隔</option>
+                <option value="daily">每天定时</option>
+              </select>
+            </label>
+            <label class="field" id="wrapInterval"><span>间隔（分钟）</span><input type="number" id="cfgInterval" min="5"></label>
+          </div>
+          <div class="field hidden" id="wrapDaily">
+            <span>执行时刻（可添加多个）</span>
+            <div class="time-add">
+              <input type="time" id="cfgDailyTime">
+              <button class="btn sm" type="button" id="btnAddDailyTime">添加</button>
+            </div>
+            <div class="chips" id="dailyTimeChips"></div>
+            <em>例如 03:30、12:00、22:00，到点各做一次增量预热。</em>
+          </div>
+          <em class="note">定时任务只做增量扫描：已有完整 MediaInfo 的项目会自动跳过。</em>
+        </div>
+
+        <div class="group">
+          <h4>新片入库监听</h4>
+          <label class="field switch-field"><span>新影片入库后自动预热</span><label class="switch"><input type="checkbox" id="cfgWatchEnabled"><i></i></label></label>
+          <label class="field"><span>检测间隔（秒，最小 60）</span><input type="number" id="cfgWatchPoll" min="60"></label>
+          <em class="note">按入库时间增量查询 Emby（不做全库扫描），发现新 STRM 影片立即预热；建议间隔 120–600 秒。</em>
+        </div>
+
+        <div class="group">
+          <h4>入库通知（Webhook 唤醒）</h4>
+          <label class="field switch-field"><span>收到 Emby 入库通知立即检测</span><label class="switch"><input type="checkbox" id="cfgHookEnabled"><i></i></label></label>
+          <label class="field"><span>通知令牌 api_key（可留空）</span><input type="text" id="cfgHookToken" placeholder="留空表示不校验"></label>
+          <em class="note">在 Emby「Webhooks」插件添加通用 Webhook，地址填
+            <code>http://NAS的IP:8799/hook/emby?api_key=令牌</code>，事件勾选“新媒体已添加（library.new）”。通知到达后立即触发新片检测，无需等待轮询间隔。</em>
+        </div>
+
+        <div class="group">
+          <h4>失败循环预热</h4>
+          <label class="field switch-field"><span>本次运行内循环重试</span><label class="switch"><input type="checkbox" id="cfgLoopEnabled"><i></i></label></label>
+          <div class="grid2">
+            <label class="field"><span>循环轮数</span><input type="number" id="cfgRounds" min="0" max="10"></label>
+            <label class="field"><span>轮间隔（秒）</span><input type="number" id="cfgRoundDelay" min="0"></label>
+          </div>
+          <label class="field switch-field"><span>后台自动重试失败队列</span><label class="switch"><input type="checkbox" id="cfgAutoRetry"><i></i></label></label>
+          <div class="grid2">
+            <label class="field"><span>重试间隔（秒）</span><input type="number" id="cfgRetryInterval" min="60"></label>
+            <label class="field"><span>最多尝试（0=不限）</span><input type="number" id="cfgMaxAttempts" min="0"></label>
+          </div>
+        </div>
+
+        <div class="group settings-actions">
+          <button class="btn primary js-save-settings" type="button">保存预热设置</button>
+        </div>
+
+      </div>
+    </details>
+  </section>
+
+  <!-- ============================================= 备份同步 -->
+  <section class="page" id="page-sync">
+    <div class="sync-grid">
+      <div class="card panel sync-main">
+        <div class="panel-head">
+          <h2>同步状态</h2>
+          <span class="badge" id="syncBadge">—</span>
+        </div>
+        <div class="sync-hero">
+          <div class="sync-num">
+            <span class="sync-num-label">上次同步</span>
+            <strong class="sync-num-value" id="syncLastText">—</strong>
+            <span class="stat-hint" id="syncReasonText">尚未执行过同步</span>
+          </div>
+          <div class="sync-nums">
+            <div class="sync-cell">
+              <strong class="sync-count ok" id="syncCopied">—</strong>
+              <span>复制</span>
+            </div>
+            <div class="sync-cell">
+              <strong class="sync-count" id="syncSkipped">—</strong>
+              <span>跳过</span>
+            </div>
+            <div class="sync-cell">
+              <strong class="sync-count danger" id="syncFailedN">—</strong>
+              <span>失败</span>
+            </div>
+          </div>
+        </div>
+        <div class="sync-ops">
+          <button class="btn primary lg" id="btnSyncNow">
+            <svg viewBox="0 0 24 24" class="ic"><path d="M12 4V1L8 5l4 4V6a6 6 0 015.7 7.9l1.5 1.5A8 8 0 0012 4zm0 15.9a6 6 0 01-5.7-7.9L4.8 10.5A8 8 0 0012 20v3l4-4-4-4v2.9z" fill="currentColor"/></svg>
+            立即同步
+          </button>
+          <button class="btn" id="btnSyncSettings">同步设置</button>
+        </div>
+        <div class="sync-kv">
+          <ul class="kv">
+            <li><span>下次定时同步</span><b id="kvSyncNext">—</b></li>
+            <li><span>预热结束后自动同步</span><b id="kvSyncAfter">—</b></li>
+            <li><span>同步内容</span><b id="kvSyncScope">—</b></li>
+            <li><span>来源 → 目标</span><b id="kvSyncPath">—</b></li>
+          </ul>
+        </div>
+        <div class="live">
+          <div class="live-head">
+            <h3>同步日志</h3>
+            <div class="live-tools">
+              <label class="chk"><input type="checkbox" id="autoScrollSync" checked><span>自动滚动</span></label>
+              <button class="link" id="btnClearSyncLog">清空显示</button>
+            </div>
+          </div>
+          <div class="log" id="syncLog"></div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card panel">
+          <div class="panel-head"><h2>同步规则</h2></div>
+          <ul class="rule-list">
+            <li><i>1</i>点击「立即同步」先对比两边目录，弹出同步明细确认后再执行</li>
+            <li><i>2</i>B 中已存在相同文件 → <b>跳过</b>，不覆盖</li>
+            <li><i>3</i>B 中不存在 → 按与 A 相同的目录结构<b>复制</b></li>
+            <li><i>4</i>同步 <code>*-mediainfo.json</code>，可一并同步图片与字幕</li>
+            <li><i>5</i>有实际复制（变动）时推送通知，无变动不打扰</li>
+            <li><i>6</i>来源 A 留空时，自动使用媒体库映射后的本机路径</li>
+          </ul>
+        </div>
+        <div class="card panel">
+          <div class="panel-head"><h2>触发方式</h2></div>
+          <ul class="kv">
+            <li><span>预热结束后</span><b id="kvTrigAfter">—</b></li>
+            <li><span>每天定时</span><b id="kvTrigSched">—</b></li>
+            <li><span>手动</span><b>「立即同步」按钮</b></li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 同步设置（折叠面板） -->
+    <details class="card panel settings-block" id="syncSettingsBlock">
+      <summary>
+        <span class="sum-title">同步设置</span>
+        <span class="sum-hint">来源 / 目标目录 · 同步内容 · 触发方式</span>
+        <span class="sum-arrow">▾</span>
+      </summary>
+      <div class="settings-body">
+        <div class="group">
+          <label class="field switch-field"><span>启用备份同步</span><label class="switch"><input type="checkbox" id="cfgSyncEnabled"><i></i></label></label>
+          <label class="field">
+            <span>来源目录 A（每行一个，留空使用媒体库本机路径）</span>
+            <textarea id="cfgSyncSource" rows="2" placeholder="/vol2/1000/影视库/0strm/strm/"></textarea>
+          </label>
+          <label class="field">
+            <span>目标目录 B</span>
+            <input type="text" id="cfgSyncTarget" placeholder="/vol2/1000/mediainfo-backup/">
+          </label>
+          <div class="grid2">
+            <label class="field switch-field"><span>一起同步图片</span><label class="switch"><input type="checkbox" id="cfgSyncImages"><i></i></label></label>
+            <label class="field switch-field"><span>一起同步字幕</span><label class="switch"><input type="checkbox" id="cfgSyncSubs"><i></i></label></label>
+            <label class="field switch-field"><span>预热结束后自动同步</span><label class="switch"><input type="checkbox" id="cfgSyncAfter"><i></i></label></label>
+            <label class="field switch-field"><span>每天定时同步</span><label class="switch"><input type="checkbox" id="cfgSyncSched"><i></i></label></label>
+          </div>
+          <label class="field half"><span>定时同步时刻</span><input type="time" id="cfgSyncTime"></label>
+          <em class="note">
+            把 A 目录内 <code>*-mediainfo.json</code>（可选图片、字幕）按相同目录结构同步到 B：
+            B 已存在的文件跳过，不存在的复制。手动同步会先展示明细，确认后才执行。
+          </em>
+        </div>
+        <div class="group settings-actions">
+          <button class="btn primary js-save-settings" type="button">保存同步设置</button>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ============================================= 任务记录 -->
+  <section class="page" id="page-history">
+    <div class="card panel hist-panel">
+      <div class="panel-head">
+        <h2>全部任务记录</h2>
+        <span class="muted" id="histTotalText"></span>
+      </div>
+      <div class="hist-table-wrap">
+        <table class="hist-table">
+          <thead>
+            <tr>
+              <th>开始时间</th><th>类型</th><th class="num">条目</th><th class="num">成功</th>
+              <th class="num">失败</th><th class="num">备份</th><th class="num">时长</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody id="histBody">
+            <tr class="empty-row"><td colspan="8">暂无记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="hist-foot">
+        <span class="muted">只保留最近 500 条记录</span>
+        <button class="btn sm" id="btnHistRefresh">刷新</button>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    通过 Emby <code>PlaybackInfo</code> 接口触发真实探测 · 不下载完整视频 · 不修改 STRM / NFO
+  </footer>
+</main>
+
+<!-- ============================================= 同步预览弹窗 -->
+<div class="modal-mask" id="syncModalMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h3>同步明细预览</h3>
+      <button class="icon-btn" id="btnCloseSyncModal" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-sub" id="syncPlanSummary">正在对比两边目录…</div>
+    <div class="modal-body" id="syncPlanList">
+      <div class="empty">正在读取…</div>
+    </div>
+    <div class="modal-foot">
+      <label class="chk" id="wrapPlanFilter"><input type="checkbox" id="planOnlyCopy"><span>只看将复制的文件</span></label>
+      <div class="modal-btns">
+        <button class="btn ghost" id="btnCancelSync">取消</button>
+        <button class="btn primary" id="btnConfirmSync">确认同步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="drawer-mask" id="drawerMask"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <h2>公共设置</h2>
+    <button class="icon-btn" id="btnCloseSettings" aria-label="关闭">✕</button>
+  </div>
+  <div class="drawer-body">
+
+    <div class="group">
+      <h4>Emby 连接</h4>
+      <label class="field">
+        <span>服务器地址</span>
+        <input type="text" id="cfgUrl" placeholder="http://127.0.0.1:8096">
+        <em>带不带 <code>/emby</code> 前缀都行，程序会自动探测</em>
+      </label>
+      <label class="field">
+        <span>API Token</span>
+        <input type="password" id="cfgToken" placeholder="留空表示不修改">
+        <em>Emby 控制台 → 高级 → API 密钥</em>
+      </label>
+      <label class="field half">
+        <span>请求超时（秒）</span>
+        <input type="number" id="cfgTimeout" min="10" max="1800">
+      </label>
+      <div class="test-row">
+        <button class="btn sm" id="btnTest">测试连接</button>
+        <span class="test-result" id="testResult"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h4>媒体库范围</h4>
+      <label class="field">
+        <span>媒体根目录（Emby 内部路径，每行一个）</span>
+        <textarea id="cfgRoots" rows="4" placeholder="/data/media/movies/&#10;/data/media/tv/"></textarea>
+        <em>必须填 Emby 容器里看到的路径，留空表示处理全部媒体库</em>
+      </label>
+      <label class="field">
+        <span>路径映射（可选，每行 <code>Emby路径 = 本机路径</code>）</span>
+        <textarea id="cfgMappings" rows="3" placeholder="/data/media/ = /vol1/1000/media/"></textarea>
+        <em>用于读取 STRM 文件内容，识别"同名换源"；备份同步来源 A 留空时也用它定位本机路径</em>
+      </label>
+    </div>
+
+    <div class="group">
+      <h4>消息通知</h4>
+      <label class="field"><span>PushPlus Token</span>
+        <input type="text" id="cfgPushplus" placeholder="在 pushplus.plus 微信扫码获取，留空不启用">
+      </label>
+      <div class="test-row">
+        <button class="btn sm" type="button" id="btnTestNotify">PushPlus 测试</button>
+        <span class="test-result" id="notifyTestResult"></span>
+      </div>
+      <label class="field"><span>完成通知 Webhook（可选）</span><input type="text" id="cfgWebhook" placeholder="https://..."></label>
+      <div class="test-row">
+        <button class="btn sm" type="button" id="btnTestWebhook">Webhook 测试</button>
+        <span class="test-result" id="webhookTestResult"></span>
+      </div>
+      <em class="note">预热与备份同步只在"实际有变动"的任务结束时推送（开始时间、持续时长、条目明细、成功/失败数量）；
+        空扫描、纯导出备份、没有复制的同步不会推送。</em>
+    </div>
+
+    <div class="group">
+      <h4>面板</h4>
+      <div class="grid2">
+        <label class="field"><span>监听端口</span><input type="number" id="cfgPort" min="1" max="65535"><em>修改后需重启服务</em></label>
+        <label class="field"><span>访问密码</span><input type="password" id="cfgPassword" placeholder="留空表示不修改"></label>
+      </div>
+    </div>
+
+  </div>
+  <div class="drawer-foot">
+    <button class="btn ghost" id="btnCancelSettings">取消</button>
+    <button class="btn primary" id="btnSaveSettings">保存配置</button>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

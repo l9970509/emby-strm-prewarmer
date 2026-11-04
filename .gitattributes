@@ -1,0 +1,20 @@
+# 统一换行符：脚本与源码保持 LF，避免在飞牛上执行失败
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+cmd/*  text eol=lf
+wizard/* text eol=lf
+
+# 二进制
+*.png  binary
+*.PNG  binary
+*.jpg  binary
+*.ico  binary
+*.fpk  binary
+*.zip  binary
+*.exe  binary

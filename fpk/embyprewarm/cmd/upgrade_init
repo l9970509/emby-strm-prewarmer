@@ -1,0 +1,11 @@
+#!/bin/bash
+# 升级前：停掉旧服务并备份旧配置
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -f "${TRIM_PKGETC}/config.json" ]; then
+    cp -f "${TRIM_PKGETC}/config.json" "${TRIM_PKGVAR}/config.backup-$(date +%Y%m%d%H%M%S).json" 2>/dev/null
+fi
+
+bash "${DIR}/main" stop >/dev/null 2>&1
+exit 0

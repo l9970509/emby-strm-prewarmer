@@ -1,0 +1,17 @@
+#!/bin/bash
+# 升级后：补齐新版本可能新增的配置项，并修正权限
+
+APP_DIR="${TRIM_APPDEST}/prewarmer"
+CONF="${TRIM_PKGETC}/config.json"
+LOG_DIR="${TRIM_PKGVAR}/logs"
+mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}" "${LOG_DIR}"
+
+python3 "${APP_DIR}/app/bootstrap.py" --config "${CONF}" --port 8799 >> "${LOG_DIR}/upgrade.log" 2>&1
+
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME}" ]; then
+    chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${TRIM_PKGETC}" "${TRIM_PKGVAR}" 2>/dev/null
+    chown "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${TRIM_APPDEST}" 2>/dev/null
+    chmod 0755 "${TRIM_APPDEST}" 2>/dev/null
+fi
+
+exit 0

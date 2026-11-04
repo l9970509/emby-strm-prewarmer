@@ -1,0 +1,19 @@
+{
+  ".url": {
+    "embyprewarm.main": {
+      "title": "Emby 媒体信息预热",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/embyprewarm",
+      "gatewaySocket": "app.sock",
+      "url": "/app/embyprewarm",
+      "allUsers": false,
+      "control": {
+        "fullUrlPerm": "hidden",
+        "pathPerm": "hidden",
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}

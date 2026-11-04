@@ -1,0 +1,68 @@
+[
+  {
+    "stepTitle": "连接 Emby",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "请在 Emby 控制台 → 高级 → API 密钥 中新建一个密钥，然后粘贴到下面。地址填 Emby 的访问地址，例如 http://127.0.0.1:8096 或 http://192.168.1.10:8096。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_emby_url",
+        "label": "Emby 地址",
+        "initValue": "http://127.0.0.1:8096",
+        "rules": [
+          {
+            "required": true,
+            "message": "请填写 Emby 访问地址"
+          },
+          {
+            "pattern": "^https?://.+",
+            "message": "地址需以 http:// 或 https:// 开头"
+          }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_emby_token",
+        "label": "Emby API 密钥",
+        "rules": []
+      }
+    ]
+  },
+  {
+    "stepTitle": "媒体库范围",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "媒体根目录要填 Emby 内部看到的路径（Emby 媒体库设置里的文件夹路径），不是飞牛的文件路径。多个目录用英文逗号分隔；留空表示预热 Emby 全库。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_roots",
+        "label": "Emby 媒体根目录（可留空）",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "text",
+        "field": "wizard_path_map",
+        "label": "路径映射（可留空）",
+        "rules": []
+      },
+      {
+        "type": "tips",
+        "helpText": "路径映射写法：Emby路径=飞牛路径，多个用英文逗号分隔，例如 /media=/vol1/1000/media。配置后可读取 .strm 内容做换源检测，并把 mediainfo.json 备份写到影片同目录。"
+      }
+    ]
+  },
+  {
+    "stepTitle": "文件授权",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "安装完成后，请在「应用中心 → Emby 媒体信息预热 → 设置 → 授权目录」中添加你的影视目录（需要可读写）。没有授权时预热仍可正常进行，但不会在影片目录写入 mediainfo.json 备份。"
+      }
+    ]
+  }
+]

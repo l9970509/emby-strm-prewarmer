@@ -1,0 +1,36 @@
+#!/bin/bash
+# 安装完成后：初始化目录与配置文件（把安装向导里填的值写进 config.json）
+
+APP_DIR="${TRIM_APPDEST}/prewarmer"
+CONF="${TRIM_PKGETC}/config.json"
+LOG_DIR="${TRIM_PKGVAR}/logs"
+INSTALL_LOG="${LOG_DIR}/install.log"
+
+mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}" "${LOG_DIR}"
+touch "${INSTALL_LOG}"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') - install_callback start" >> "${INSTALL_LOG}"
+
+if [ ! -f "${APP_DIR}/app/bootstrap.py" ]; then
+    echo "应用文件不完整（缺少 bootstrap.py），请重新安装。" >"${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+python3 "${APP_DIR}/app/bootstrap.py" --config "${CONF}" --port 8799 >> "${INSTALL_LOG}" 2>&1
+if [ $? -ne 0 ]; then
+    echo "配置初始化失败，请查看日志：${INSTALL_LOG}" >"${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+# 生命周期脚本可能以 root 运行，把应用目录交给应用用户
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME}" ]; then
+    chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${TRIM_PKGETC}" "${TRIM_PKGVAR}" 2>/dev/null
+    # 统一网关的 socket 必须建在 target 目录，需要应用用户可写
+    chown "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${TRIM_APPDEST}" 2>/dev/null
+    chmod 0755 "${TRIM_APPDEST}" 2>/dev/null
+fi
+
+chmod 600 "${CONF}" 2>/dev/null
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') - install_callback done" >> "${INSTALL_LOG}"
+exit 0

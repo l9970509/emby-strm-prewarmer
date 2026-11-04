@@ -1,0 +1,35 @@
+[
+  {
+    "stepTitle": "应用设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "留空的项表示保持当前值不变。定时预热、并发数、失败重试等更多参数请打开应用面板在「设置」中调整。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_emby_url",
+        "label": "Emby 地址",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_emby_token",
+        "label": "Emby API 密钥（留空不修改）",
+        "rules": []
+      },
+      {
+        "type": "text",
+        "field": "wizard_roots_force",
+        "label": "Emby 媒体根目录（填写则覆盖现有值）",
+        "rules": []
+      },
+      {
+        "type": "text",
+        "field": "wizard_path_map",
+        "label": "路径映射：Emby路径=飞牛路径",
+        "rules": []
+      }
+    ]
+  }
+]

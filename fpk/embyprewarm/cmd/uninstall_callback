@@ -1,0 +1,5 @@
+#!/bin/bash
+# 卸载后：默认保留用户数据（配置 / 失败队列 / 日志），不主动删除。
+# 如需彻底清理，可手动删除 /vol*/@appconf/embyprewarm 与 /vol*/@appdata/embyprewarm
+
+exit 0

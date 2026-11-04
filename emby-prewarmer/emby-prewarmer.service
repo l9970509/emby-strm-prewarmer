@@ -1,0 +1,18 @@
+[Unit]
+Description=Emby STRM MediaInfo Prewarmer (fnOS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 按实际安装目录修改下面两行
+WorkingDirectory=/opt/emby-prewarmer
+ExecStart=/usr/bin/python3 /opt/emby-prewarmer/run.py serve --config /opt/emby-prewarmer/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

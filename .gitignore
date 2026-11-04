@@ -1,0 +1,42 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 运行数据与日志 ----
+data/
+logs/
+**/data/
+**/logs/
+*.log
+
+# ---- 本地配置（可能含 Token / 密码）----
+config.json
+config.local.json
+!config.example.json
+!fpk/embyprewarm/config/**
+
+# ---- 开发测试与临时目录 ----
+.tmp-*/
+.tmp-test/
+.tmp-fpk/
+.tmp-ref/
+.workbuddy/
+--help
+
+# ---- 安装包：只保留当前版本 ----
+embyprewarm-*.fpk
+!embyprewarm-1.6.2.fpk
+*.zip
+
+# ---- 第三方打包工具 ----
+fnpack.exe
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

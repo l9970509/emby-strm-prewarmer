@@ -1,0 +1,6 @@
+#!/bin/bash
+# 应用设置变更前：先停服务，稍后由 config_callback 用新配置重启
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+bash "${DIR}/main" stop >/dev/null 2>&1
+exit 0

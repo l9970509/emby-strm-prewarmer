@@ -1,0 +1,11 @@
+[
+  {
+    "stepTitle": "卸载说明",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "卸载会移除应用本体，但会保留配置、失败队列和日志。已经写入影片目录的 mediainfo.json 备份不会被删除。"
+      }
+    ]
+  }
+]

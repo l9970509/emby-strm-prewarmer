@@ -1,0 +1,53 @@
+{
+  "emby": {
+    "url": "http://127.0.0.1:8096",
+    "token": "在这里填入你的 Emby API Token",
+    "user_id": "",
+    "timeout": 180
+  },
+  "scan": {
+    "roots": [
+      "/data/media/movies/",
+      "/data/media/tv/"
+    ],
+    "path_mappings": {
+      "/data/media/": "/vol1/1000/media/"
+    },
+    "only_strm": true,
+    "include_types": "Movie,Episode,Video"
+  },
+  "prewarm": {
+    "concurrency": 2,
+    "delay_seconds": 1.0,
+    "retry_delay_seconds": 10,
+    "max_retries": 2,
+    "max_items_per_run": 0,
+    "verify": true
+  },
+  "schedule": {
+    "enabled": false,
+    "mode": "interval",
+    "interval_minutes": 180,
+    "daily_time": "03:30"
+  },
+  "failure_loop": {
+    "enabled": true,
+    "rounds": 2,
+    "round_delay_seconds": 180,
+    "auto_retry": true,
+    "auto_retry_interval_seconds": 600,
+    "max_attempts": 0
+  },
+  "export": {
+    "enabled": true,
+    "overwrite": false
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8787,
+    "password": ""
+  },
+  "notify": {
+    "webhook_url": ""
+  }
+}
