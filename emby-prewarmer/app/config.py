@@ -14,6 +14,20 @@ from pathlib import Path
 from typing import Any
 
 
+def is_masked_secret(value: Any) -> bool:
+    """判断回传的密钥是不是「打码占位值」，而不是用户真正输入的密钥。
+
+    前端拿到的是 ``public()`` 处理过的 ``********wxyz`` 形式，真实令牌/密码
+    不会以 ``*`` 开头，所以只要为空或首字符是 ``*`` 就认定「未修改」。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return True
+    if text.startswith("*"):
+        return True
+    return set(text) <= {"*", "•", "·"}
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "emby": {
         # Emby 地址，是否带 /emby 前缀都可以，程序会自动探测
@@ -424,17 +438,22 @@ class ConfigStore:
         cfg = self.get()
         token = cfg["emby"]["token"]
         cfg["emby"]["token_set"] = bool(token)
+        # 存下来的就是打码值，说明曾被前端整体回传覆盖过，需要用户重填
+        cfg["emby"]["token_corrupt"] = is_masked_secret(token) and bool(token)
         cfg["emby"]["token"] = ("*" * 8 + token[-4:]) if len(token) > 8 else ("*" * len(token))
         cfg["server"]["password_set"] = bool(cfg["server"]["password"])
         cfg["server"]["password"] = ""
         pushplus = cfg["notify"].get("pushplus_token") or ""
         cfg["notify"]["pushplus_token_set"] = bool(pushplus)
+        cfg["notify"]["pushplus_token_corrupt"] = is_masked_secret(pushplus) and bool(pushplus)
         cfg["notify"]["pushplus_token"] = ("*" * 8 + pushplus[-4:]) if len(pushplus) > 8 else ("*" * len(pushplus))
         strm = cfg["strm"]
         ol_token = strm.get("openlist_token") or ""
         strm["openlist_token_set"] = bool(ol_token)
+        strm["openlist_token_corrupt"] = is_masked_secret(ol_token) and bool(ol_token)
         strm["openlist_token"] = ("*" * 8 + ol_token[-4:]) if len(ol_token) > 8 else ("*" * len(ol_token))
         ol_password = strm.get("openlist_password") or ""
         strm["openlist_password_set"] = bool(ol_password)
+        strm["openlist_password_corrupt"] = is_masked_secret(ol_password) and bool(ol_password)
         strm["openlist_password"] = "" if not ol_password else "*" * 8
         return cfg

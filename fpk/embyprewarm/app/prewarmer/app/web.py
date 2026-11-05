@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .config import ConfigStore
+from .config import ConfigStore, is_masked_secret
 from .emby import EmbyClient, EmbyError
 from .engine import MODES, Engine
 from .openlist import OpenListClient, OpenListError
@@ -229,30 +229,38 @@ class Handler(BaseHTTPRequestHandler):
             incoming = dict(body.get("config") or {})
             current = self.ctx.config.get()
             emby = incoming.setdefault("emby", {})
-            # 前端拿到的是打码 Token，未修改时保持原值
-            if not emby.get("token") or set(str(emby.get("token"))) == {"*"}:
+            # 前端拿到的是打码 Token（********abcd），未修改时保持原值
+            if is_masked_secret(emby.get("token")):
                 emby["token"] = current["emby"]["token"]
             server = incoming.setdefault("server", {})
-            if not server.get("password"):
+            if is_masked_secret(server.get("password")):
                 server["password"] = current["server"]["password"]
             notify = incoming.setdefault("notify", {})
-            pushplus = str(notify.get("pushplus_token") or "")
-            # 前端拿到的是打码 Token，未修改时保持原值
-            if not pushplus or set(pushplus) == {"*"}:
+            if is_masked_secret(notify.get("pushplus_token")):
                 notify["pushplus_token"] = current["notify"].get("pushplus_token", "")
-            # STRM 生成：OpenList 令牌 / 密码同样是打码展示，留空或全 * 表示不修改
+            # STRM 生成：OpenList 令牌 / 密码同样是打码展示，留空或打码表示不修改
             strm = incoming.get("strm") or {}
             if isinstance(strm, dict):
                 incoming["strm"] = strm
-                raw_token = str(strm.get("openlist_token") or "")
-                if not raw_token or set(raw_token) == {"*"}:
+                if is_masked_secret(strm.get("openlist_token")):
                     strm["openlist_token"] = current["strm"].get("openlist_token", "")
-                raw_password = str(strm.get("openlist_password") or "")
-                if not raw_password or set(raw_password) == {"*"}:
+                if is_masked_secret(strm.get("openlist_password")):
                     strm["openlist_password"] = current["strm"].get("openlist_password", "")
             saved = self.ctx.config.save(incoming)
             self.ctx.bus.info("配置已更新")
             self._json({"ok": True, "config": self.ctx.config.public(), "saved": saved})
+        elif path == "/api/strm/tasks":
+            # 只保存 STRM 生成任务列表：不回传整份配置，避免把打码的
+            # Emby / OpenList 密钥当成真值写回（曾导致「token is invalidated」）
+            tasks = body.get("tasks")
+            if not isinstance(tasks, list):
+                self._json({"ok": False, "error": "tasks 必须是数组"}, 400)
+                return
+            current = self.ctx.config.get()
+            current.setdefault("strm", {})["tasks"] = tasks
+            self.ctx.config.save(current)
+            self.ctx.bus.info(f"生成任务已更新（{len(tasks)} 个目录）")
+            self._json({"ok": True, "config": self.ctx.config.public()})
         elif path == "/api/test":
             self._json(self._test_connection(body))
         elif path == "/api/notify/test":
@@ -459,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
 
         token = str(incoming.get("pushplus_token") or "").strip()
         # 前端拿到的是打码 Token（或留空表示不修改）
-        if not token or set(token) == {"*"}:
+        if is_masked_secret(token):
             token = str(cfg["notify"].get("pushplus_token") or "").strip()
         if not token:
             return {"ok": False, "error": "请先填写并保存 PushPlus Token"}
@@ -472,11 +480,11 @@ class Handler(BaseHTTPRequestHandler):
         incoming = (body.get("config") or {}).get("strm") or {}
         url = str(incoming.get("openlist_url") or cfg["strm"].get("openlist_url") or "").strip()
         token = str(incoming.get("openlist_token") or "")
-        if not token or set(token) == {"*"}:
+        if is_masked_secret(token):
             token = cfg["strm"].get("openlist_token") or ""
         username = str(incoming.get("openlist_username") or cfg["strm"].get("openlist_username") or "")
         password = str(incoming.get("openlist_password") or "")
-        if not password or set(password) == {"*"}:
+        if is_masked_secret(password):
             password = cfg["strm"].get("openlist_password") or ""
         if not url:
             return {"ok": False, "error": "请填写 OpenList 地址"}
@@ -511,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
         incoming = (body.get("config") or {}).get("emby") or {}
         url = (incoming.get("url") or cfg["emby"]["url"] or "").strip()
         token = (incoming.get("token") or "").strip()
-        if not token or set(token) == {"*"}:
+        if is_masked_secret(token):
             token = cfg["emby"]["token"]
         if not url:
             return {"ok": False, "error": "请填写 Emby 地址"}

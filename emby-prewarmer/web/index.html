@@ -353,6 +353,7 @@
             <label class="field"><span>账号</span><input type="text" id="cfgOlUser" placeholder="admin"></label>
             <label class="field"><span>密码</span><input type="password" id="cfgOlPass" placeholder="留空则不修改"></label>
           </div>
+          <div class="field-warn" id="olTokenWarn" hidden></div>
           <div class="test-row">
             <button class="btn sm" type="button" id="btnTestOpenlist">测试 OpenList 连接</button>
             <span class="test-result" id="openlistTestResult"></span>
@@ -680,6 +681,7 @@
         <input type="password" id="cfgToken" placeholder="留空表示不修改">
         <em>Emby 控制台 → 高级 → API 密钥</em>
       </label>
+      <div class="field-warn" id="embyTokenWarn" hidden></div>
       <label class="field half">
         <span>请求超时（秒）</span>
         <input type="number" id="cfgTimeout" min="10" max="1800">
@@ -709,6 +711,7 @@
       <label class="field"><span>PushPlus Token</span>
         <input type="text" id="cfgPushplus" placeholder="在 pushplus.plus 微信扫码获取，留空不启用">
       </label>
+      <div class="field-warn" id="pushplusWarn" hidden></div>
       <div class="test-row">
         <button class="btn sm" type="button" id="btnTestNotify">PushPlus 测试</button>
         <span class="test-result" id="notifyTestResult"></span>

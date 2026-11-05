@@ -78,7 +78,7 @@ def build(
     syncer.engine = engine  # 同步完成后由引擎推送通知（PushPlus / Webhook）
     engine.syncer = syncer
     strmgen = StrmGenerator(config, store, bus)
-    strmgen.engine = engine  # 生成后可通知 + 自动触发预热（闭环）
+    strmgen.engine = engine  # 生成完成后可推送通知；预热由 Emby 入库通知触发
     scheduler = Scheduler(config, engine, store, bus, syncer=syncer, strmgen=strmgen)
     return config, store, bus, engine, scheduler, syncer, strmgen
 

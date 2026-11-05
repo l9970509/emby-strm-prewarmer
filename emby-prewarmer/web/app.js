@@ -821,10 +821,9 @@ function updateStrmTaskStatus() {
 /* ---------------------------------------------------- 任务增删改（立即生效） */
 async function persistTasks() {
   if (!state.cfg) throw new Error('配置尚未加载');
-  const payload = JSON.parse(JSON.stringify(state.cfg));
-  payload.strm = payload.strm || {};
-  payload.strm.tasks = state.strmTasks.map((t) => ({ ...t }));
-  const res = await api('/api/config', 'POST', { config: payload });
+  // 只提交任务列表：整份配置里带着打码后的密钥，回传会覆盖真令牌
+  const tasks = state.strmTasks.map((t) => ({ ...t }));
+  const res = await api('/api/strm/tasks', 'POST', { tasks });
   if (!res.ok) throw new Error(res.error || '保存失败');
   state.cfg = res.config;
   state.strmTasks = (res.config.strm.tasks || []).map(normalizeStrmTask);
@@ -1283,11 +1282,22 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeDrawer();
 });
 
+/* 密钥被误存成打码值（********abcd）时给出明确提示 */
+function setFieldWarn(id, text) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.hidden = !text;
+  node.textContent = text ? '⚠️ ' + text : '';
+}
+
 function fillConfig(cfg) {
   state.cfg = cfg;
   $('#cfgUrl').value = cfg.emby.url || '';
   $('#cfgToken').value = '';
   $('#cfgToken').placeholder = cfg.emby.token_set ? '已配置，留空则不修改' : '请填写 API Token';
+  setFieldWarn('embyTokenWarn', cfg.emby.token_corrupt
+    ? '已保存的 API Token 是打码值，无法用于连接。请重新填写 Emby API 密钥并保存。'
+    : '');
   $('#cfgTimeout').value = cfg.emby.timeout;
   $('#cfgRoots').value = (cfg.scan.roots || []).join('\n');
   $('#cfgMappings').value = Object.entries(cfg.scan.path_mappings || {})
@@ -1326,6 +1336,9 @@ function fillConfig(cfg) {
   $('#cfgPushplus').placeholder = cfg.notify.pushplus_token_set
     ? '已配置，留空则不修改'
     : '在 pushplus.plus 获取 Token，留空不启用';
+  setFieldWarn('pushplusWarn', cfg.notify.pushplus_token_corrupt
+    ? '已保存的 PushPlus Token 是打码值，通知会发送失败。请重新填写并保存。'
+    : '');
   $('#cfgSyncEnabled').checked = !!(cfg.sync && cfg.sync.enabled);
   $('#cfgSyncSource').value = ((cfg.sync && cfg.sync.source) || []).join('\n');
   $('#cfgSyncTarget').value = (cfg.sync && cfg.sync.target) || '';
@@ -1345,6 +1358,9 @@ function fillConfig(cfg) {
   $('#cfgOlUser').value = strm.openlist_username || '';
   $('#cfgOlPass').value = '';
   $('#cfgOlPass').placeholder = strm.openlist_password_set ? '已配置，留空则不修改' : '留空则不修改';
+  setFieldWarn('olTokenWarn', (strm.openlist_token_corrupt || strm.openlist_password_corrupt)
+    ? '已保存的 OpenList 令牌/密码是打码值，登录会报 token is invalidated。请在下方重新填写令牌（或账号密码）后保存。'
+    : '');
   $('#cfgStrmPrefix').value = strm.prefix || '';
   $('#cfgStrmExts').value = strm.exts || '';
   $('#cfgStrmExtras').value = strm.extras || '';
