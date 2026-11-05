@@ -418,6 +418,12 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self.ctx.config.get()
         hook = cfg.get("hook", {})
         if not hook.get("enabled"):
+            # 关键排查点：Emby 已经在发通知，但这里是关着的 → 新片永远不会自动预热
+            self.ctx.bus.warn(
+                "📩 收到 Emby 入库通知，但「入库通知」开关是关闭的，已忽略。"
+                "要到设置里打开，新生成的 strm 才会自动预热。",
+                LogBus.PREWARM,
+            )
             self._json({"ok": False, "error": "入库通知未启用"}, HTTPStatus.FORBIDDEN)
             return
         expected = (hook.get("token") or "").strip()
@@ -425,6 +431,11 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             supplied = (query.get("api_key") or query.get("token") or [""])[0].strip()
             if supplied != expected:
+                self.ctx.bus.warn(
+                    "📩 入库通知 api_key 校验失败：Emby Webhook 地址里的 api_key 与设置里的令牌不一致，"
+                    "该通知已被拒绝。",
+                    LogBus.PREWARM,
+                )
                 self._json({"ok": False, "error": "api_key 校验失败"}, HTTPStatus.UNAUTHORIZED)
                 return
 

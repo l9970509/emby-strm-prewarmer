@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.3.fpk    # 当前版本安装包
+└── embyprewarm-1.9.4.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.3](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.4](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.3.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.4.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.3.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.4.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -125,6 +125,25 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 ```
 
 全链路都在本工具内完成，每一步都有独立日志页面与变动通知（只推有实际变动的任务）。
+
+### 新片没有自动预热？按这个顺序查
+
+生成 strm 之后本工具**不会自己去预热**，必须由「入库通知」或「新片监听」来触发。所以排查顺序是：
+
+1. **入库通知开着吗** — 设置 →「入库通知（Webhook 唤醒）」开关。关着的话，Emby 就算发了通知也会被忽略，
+   日志（预热页）现在会明确写出「收到通知但开关是关闭的」。
+2. **Emby 端的 Webhook 地址对吗** — Emby 控制台 → 插件 → Webhooks → 添加通用 Webhook：
+   `http://NAS的IP:8799/hook/emby?api_key=你在设置里填的令牌`，事件勾选「新媒体已添加」。
+   地址里的 `api_key` 与设置里的令牌不一致会被拒绝，预热日志会写「api_key 校验失败」。
+3. **打开新片监听兜底** — 设置 →「新片监听」开启后按 `poll_seconds` 轮询 Emby 的入库时间，
+   即使 Webhook 没配好也能自动预热（默认 300 秒）。
+4. **Emby API Token 是不是被打码值写坏了** — 老版本曾把 `********abcd` 这种展示值存回配置，
+   升级后设置页会显示红色提示条，重新填一次 API 密钥即可。
+5. **路径映射** — 预热日志里出现「有 N 个 STRM 无法读取本地文件…建议检查路径映射」，
+   说明 Emby 里的路径和 NAS 上的实际路径对不上（只影响换源指纹，不影响预热本身）。
+
+预热本身的所有动作都在「预热」页日志里：扫描统计（共多少个 / 已完整 / 待预热）、
+逐条成功或失败、失败原因与失败队列。
 
 ## 自行打包 fpk
 

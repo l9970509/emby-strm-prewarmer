@@ -770,6 +770,18 @@ class StrmGenerator:
         else:
             self.bus.warn(f"⚠️ STRM 生成完成（{reason}）：{note}", LogBus.STRM)
 
+        # 生成后不主动预热：入库通知和新片监听都没开的话，新 strm 永远不会被预热。
+        # 这一步最容易让人以为「预热坏了」，所以明确提示。
+        if (totals["create"] + totals["update"]) > 0:
+            hook_on = bool((cfg.get("hook") or {}).get("enabled"))
+            watch_on = bool((cfg.get("watch") or {}).get("enabled"))
+            if not hook_on and not watch_on:
+                self.bus.warn(
+                    "⚠️ 本次新生成了 strm，但「入库通知」与「新片监听」都没开启，"
+                    "Emby 入库后不会自动预热。请到设置里开启其中一个。",
+                    LogBus.STRM,
+                )
+
         result = self._finish(
             started,
             reason,
