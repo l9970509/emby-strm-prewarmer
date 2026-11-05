@@ -14,6 +14,26 @@ from pathlib import Path
 from typing import Any
 
 
+def normalize_prefix(raw: Any) -> str:
+    """规范化 STRM 前缀：去尾斜杠、补协议。
+
+    用户常只填 ``192.168.101.99:5244/d``（漏了 http://），拼出来的 strm 没有协议头，
+    Emby / 播放器无法识别。这里统一补全；rclone 挂载点（/mnt/115）、Windows 路径原样保留。
+    """
+    p = str(raw or "").strip().rstrip("/")
+    if not p:
+        return ""
+    if p.lower().startswith(("http://", "https://")):
+        return p
+    # rclone / 本地挂载点：/mnt/115、\\nas\share、D:\media
+    if p.startswith(("/", "\\")):
+        return p
+    if len(p) > 1 and p[1] == ":":
+        return p
+    # 形如 192.168.101.99:5244/d、nas.local/d、emby.example.com
+    return "http://" + p
+
+
 def is_masked_secret(value: Any) -> bool:
     """判断回传的密钥是不是「打码占位值」，而不是用户真正输入的密钥。
 
@@ -322,7 +342,10 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
     strm_cfg["openlist_url"] = (strm_cfg.get("openlist_url") or "").strip().rstrip("/")
     strm_cfg["openlist_token"] = (strm_cfg.get("openlist_token") or "").strip()
     strm_cfg["openlist_username"] = (strm_cfg.get("openlist_username") or "").strip()
-    strm_cfg["prefix"] = (strm_cfg.get("prefix") or "").strip().rstrip("/")
+    strm_cfg["prefix"] = normalize_prefix(strm_cfg.get("prefix"))
+    if not strm_cfg["prefix"] and strm_cfg["openlist_url"]:
+        # 没填前缀就跟 OpenList 地址走：<地址>/d + 网盘完整路径
+        strm_cfg["prefix"] = strm_cfg["openlist_url"] + "/d"
     raw_strm_time = str(strm_cfg.get("schedule_time") or "02:30").strip().replace("：", ":")
     legacy_strm_time = _norm_clock(raw_strm_time, "02:30")
     strm_cfg["schedule_time"] = legacy_strm_time

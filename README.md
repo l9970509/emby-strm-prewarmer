@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.1.fpk    # 当前版本安装包
+└── embyprewarm-1.9.2.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.1](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.2](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.1.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.2.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.1.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.2.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -75,6 +75,10 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 1. 填 OpenList 地址 + 长期令牌（或账号密码）、STRM 前缀（`http://IP:5244/d` 或 rclone 挂载根），
    点「测试 OpenList 连接」确认可用
+
+   > 前缀只填 `IP:5244/d` 会自动补成 `http://IP:5244/d`；**留空则用 OpenList 地址 + `/d`**。
+   > 实际写入内容 = 前缀 + 网盘完整路径，例如
+   > `http://192.168.101.99:5244/d/2dland/%E7%94%B5%E8%A7%86%E5%89%A7/.../爱情公寓%20-%20S01E01%20-%202dland.mp4`
 2. 点「添加目录」添加生成任务：网盘目录可以直接**从 OpenList 目录树里浏览选择**；「本地根目录」
    填镜像根，strm 会落在 `根目录 + 网盘完整路径` 下（例如网盘 `/2dland/动画`、根 `/vol2/…/strm`，
    实际输出 `/vol2/…/strm/2dland/动画/…`），目录结构与网盘完全一致，多个任务可共用同一个根

@@ -1015,6 +1015,20 @@ $('#taskModalMask').addEventListener('click', (e) => {
 $('#taskRemote').addEventListener('input', updateLocalPreview);
 $('#taskLocal').addEventListener('input', updateLocalPreview);
 $('#btnSaveTask').addEventListener('click', saveTaskModal);
+
+/* 前缀补全：只填了 192.168.1.10:5244/d 时自动加 http://，避免 strm 里没有协议头 */
+function normalizePrefix(value) {
+  let p = String(value || '').trim().replace(/\/+$/, '');
+  if (!p) return '';
+  if (/^https?:\/\//i.test(p)) return p;
+  if (p.startsWith('/') || p.startsWith('\\')) return p;   // rclone / Windows 挂载点
+  if (/^[a-zA-Z]:/.test(p)) return p;
+  return 'http://' + p;
+}
+$('#cfgStrmPrefix').addEventListener('blur', () => {
+  const el = $('#cfgStrmPrefix');
+  el.value = normalizePrefix(el.value);
+});
 $('#btnAddTaskTime').addEventListener('click', addTaskTime);
 $('#taskTime').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addTaskTime(); }
@@ -1535,7 +1549,7 @@ function collectConfig() {
       openlist_token: $('#cfgOlToken').value.trim(),
       openlist_username: $('#cfgOlUser').value.trim(),
       openlist_password: $('#cfgOlPass').value,
-      prefix: $('#cfgStrmPrefix').value.trim(),
+      prefix: normalizePrefix($('#cfgStrmPrefix').value),
       tasks: state.strmTasks.map((t) => ({ ...t })),
       exts: $('#cfgStrmExts').value.trim(),
       extras: $('#cfgStrmExtras').value.trim(),

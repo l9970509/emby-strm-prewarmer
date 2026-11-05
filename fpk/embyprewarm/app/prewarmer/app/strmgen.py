@@ -376,6 +376,25 @@ class StrmGenerator:
         media_exts = parse_exts(strm.get("exts") or "", DEFAULT_MEDIA_EXTS)
         extra_exts = parse_exts(strm.get("extras") or "", "")
         prefix = strm.get("prefix") or ""
+        if not prefix:
+            # 没有前缀就写盘，等于生成一堆只有路径的坏 strm，宁可报错也不写
+            errors.append(
+                "STRM 前缀为空：生成的 strm 会没有播放地址。请到「STRM 设置 → STRM 前缀」"
+                "填写 OpenList 的 /d 地址（如 http://192.168.101.99:5244/d）或 rclone 挂载根。"
+            )
+            return {
+                "task": task,
+                "mode": normalize_mode(mode),
+                "counts": {
+                    "create": 0, "update": 0, "skip": 0, "delete": 0,
+                    "extra": 0, "extra_skip": 0, "migrate": 0,
+                },
+                "items": [],
+                "writes": [],
+                "downloads": [],
+                "deletes": [],
+                "files": 0,
+            }
         local_root = Path(task["local"])
         remote_root = task["remote"]
         full = normalize_mode(mode) == MODE_FULL

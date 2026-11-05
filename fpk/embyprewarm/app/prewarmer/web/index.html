@@ -366,7 +366,7 @@
           <label class="field">
             <span>STRM 前缀</span>
             <input type="text" id="cfgStrmPrefix" placeholder="http://192.168.1.10:5244/d 或 /mnt/115">
-            <em>实际写入 = 前缀 + 网盘完整路径（<code>/d/115/影视/…</code>）。用 rclone 挂载就填挂载根，如 <code>/mnt</code>；支持 <code>{path}</code> 占位符。</em>
+            <em>实际写入 = 前缀 + 网盘完整路径（<code>/d/115/影视/…</code>）。只填 <code>IP:端口/d</code> 会自动补 <code>http://</code>；留空则用上面的 OpenList 地址 + <code>/d</code>。rclone 挂载填挂载根如 <code>/mnt</code>；支持 <code>{path}</code> 占位符。</em>
           </label>
         </div>
 
