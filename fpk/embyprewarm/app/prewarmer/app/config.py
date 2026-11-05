@@ -382,6 +382,8 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
                     "name": name,
                     "remote": remote,
                     "local": local,
+                    # 上次使用的本地根目录：换了目录后用来把已生成的 strm 自动搬过去
+                    "prev_local": str(raw.get("prev_local") or "").strip(),
                     "enabled": _coerce(True, raw.get("enabled", True)),
                     "mode": "full" if str(raw.get("mode") or "").strip().lower() == "full" else "incremental",
                     "rebuild": _coerce(True, raw["rebuild"]) if "rebuild" in raw else legacy_rebuild,
@@ -424,6 +426,18 @@ class ConfigStore:
     def save(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             merged = sanitize(patch)
+            # 本地目录被改动时记住旧位置，STRM 生成时据此把已生成的文件搬过去
+            old_tasks = {
+                str(t.get("id")): t
+                for t in ((self._data.get("strm") or {}).get("tasks") or [])
+            }
+            for task in merged["strm"]["tasks"]:
+                previous = old_tasks.get(str(task.get("id")))
+                if previous is None:
+                    continue
+                old_local = str(previous.get("local") or "").strip()
+                if old_local and old_local != task["local"]:
+                    task["prev_local"] = old_local
             self._data = merged
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")

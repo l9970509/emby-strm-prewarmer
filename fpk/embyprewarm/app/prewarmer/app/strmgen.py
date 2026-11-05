@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -54,15 +55,63 @@ def parse_exts(text: str, fallback: str = "") -> set[str]:
     return out
 
 
-def _rel_dir(remote_root: str, remote_path: str) -> str:
-    """远端文件相对任务根目录的目录部分（不含文件名）。"""
+def _rel_under_root(remote_root: str, remote_path: str) -> str:
+    """远端文件相对任务根目录的完整相对路径（含文件名）。"""
     root = "/" + remote_root.strip("/")
     path = remote_path if remote_path.startswith("/") else "/" + remote_path
-    if path == root:
-        return ""
-    if path.startswith(root + "/"):
-        return path[len(root) + 1:].rsplit("/", 1)[0]
-    return path.strip("/").rsplit("/", 1)[0]
+    if root != "/" and path.startswith(root + "/"):
+        return path[len(root) + 1:]
+    return path.strip("/")
+
+
+def _mirror_rel(remote_path: str) -> str:
+    """网盘完整路径 → 相对本地根目录的路径（镜像根：保留 /2dland/动画 这样的层级）。"""
+    return remote_path.strip("/")
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    """path 是否位于 root 目录之下（含 root 本身）。"""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _move_legacy(target: Path, candidates: list[Path]) -> Path | None:
+    """把旧布局的 strm 搬到新镜像位置（升级兼容）。
+
+    只在「新位置还没有文件」时尝试，逐个候选检查；搬到目标后返回原路径，
+    没搬成返回 None。跨盘移动失败时保留原文件不动。
+    """
+    if target.exists():
+        return None
+    for old in candidates:
+        if old == target:
+            continue
+        try:
+            if not old.is_file():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old), str(target))
+            return old
+        except OSError:
+            return None
+    return None
+
+
+def _other_roots(cfg: dict[str, Any], task: dict[str, Any]) -> list[Path]:
+    """其它任务的镜像目录，清理时用来避开别人的文件。"""
+    roots: list[Path] = []
+    mine = str(task.get("id") or "")
+    for item in (cfg.get("strm") or {}).get("tasks") or []:
+        if mine and str(item.get("id") or "") == mine:
+            continue
+        local = str(item.get("local") or "").strip()
+        remote = str(item.get("remote") or "").strip()
+        if local and remote:
+            roots.append(Path(local) / _mirror_rel(remote))
+    return roots
 
 
 def normalize_mode(value: Any) -> str:
@@ -157,13 +206,23 @@ class StrmGenerator:
         except OpenListError as exc:
             return {"ok": False, "error": str(exc)}
 
-        total = {"create": 0, "update": 0, "skip": 0, "delete": 0, "extra": 0, "extra_skip": 0}
+        total = {
+            "create": 0,
+            "update": 0,
+            "skip": 0,
+            "delete": 0,
+            "extra": 0,
+            "extra_skip": 0,
+            "migrate": 0,
+        }
         items: list[dict[str, Any]] = []
         errors: list[str] = []
         groups: list[dict[str, Any]] = []
         for task in selected:
             task_mode = normalize_mode(mode or task.get("mode"))
-            built = self._build_task(cfg, client, task, errors, mode=task_mode)
+            built = self._build_task(
+                cfg, client, task, errors, mode=task_mode, other_roots=_other_roots(cfg, task)
+            )
             for key in total:
                 total[key] += built["counts"].get(key, 0)
             for item in built["items"]:
@@ -178,6 +237,7 @@ class StrmGenerator:
                     "name": task.get("name") or task.get("remote"),
                     "remote": task.get("remote"),
                     "local": task.get("local"),
+                    "local_dir": str(Path(task["local"]) / _mirror_rel(task["remote"])),
                     "mode": task_mode,
                     "counts": built["counts"],
                 }
@@ -264,8 +324,13 @@ class StrmGenerator:
         task: dict[str, Any],
         errors: list[str],
         mode: str = MODE_INCREMENTAL,
+        other_roots: list[Path] | None = None,
     ) -> dict[str, Any]:
-        """扫描一个任务：遍历远端、对比本地，算出动作清单。"""
+        """扫描一个任务：遍历远端、对比本地，算出动作清单。
+
+        本地目录是「镜像根」：网盘 /2dland/动画/某番/01.mkv 会落到
+        <本地根>/2dland/动画/某番/01.strm，目录结构与网盘完全一致。
+        """
         strm = cfg["strm"]
         media_exts = parse_exts(strm.get("exts") or "", DEFAULT_MEDIA_EXTS)
         extra_exts = parse_exts(strm.get("extras") or "", "")
@@ -273,8 +338,19 @@ class StrmGenerator:
         local_root = Path(task["local"])
         remote_root = task["remote"]
         full = normalize_mode(mode) == MODE_FULL
+        # 该任务实际落盘的目录（镜像根 + 网盘路径）
+        task_dir = local_root / _mirror_rel(remote_root)
+        prev_local = Path(task["prev_local"]) if task.get("prev_local") else None
 
-        counts = {"create": 0, "update": 0, "skip": 0, "delete": 0, "extra": 0, "extra_skip": 0}
+        counts = {
+            "create": 0,
+            "update": 0,
+            "skip": 0,
+            "delete": 0,
+            "extra": 0,
+            "extra_skip": 0,
+            "migrate": 0,
+        }
         items: list[dict[str, Any]] = []
         writes: list[dict[str, Any]] = []
         downloads: list[dict[str, Any]] = []
@@ -287,27 +363,41 @@ class StrmGenerator:
         for entry in files:
             name = entry["name"]
             ext = os.path.splitext(name)[1].lower()
-            rel_dir = _rel_dir(remote_root, entry["path"])
+            mirrored = _mirror_rel(entry["path"])
             if ext in media_exts:
-                rel = f"{rel_dir}/{name}" if rel_dir else name
-                strm_rel = os.path.splitext(rel)[0] + ".strm"
+                strm_rel = os.path.splitext(mirrored)[0] + ".strm"
                 target = local_root / strm_rel
                 content = OpenListClient.build_url(prefix, entry["path"]) + "\n"
                 keep.add(str(target))
+
+                # 旧版布局（本地目录 = 直接落盘目录）的文件位置，用于升级后自动搬家
+                under_root = _rel_under_root(remote_root, entry["path"])
+                legacy_rel = os.path.splitext(under_root)[0] + ".strm"
+                legacy: list[Path] = [local_root / legacy_rel]
+                if prev_local is not None:
+                    legacy.append(prev_local / legacy_rel)
+                    # 上一版已经是镜像根、只是换了磁盘/根目录
+                    legacy.append(prev_local / strm_rel)
+                migrated = None
+                if not target.exists():
+                    migrated = _move_legacy(target, legacy)
+
                 exists = target.exists()
                 if full:
                     # 全量：不看旧内容，全部重写（已有算更新，没有算新增）
                     action = "update" if exists else "create"
                 elif exists:
-                    # 增量：只要本地目标目录里已经有这个 strm 就跳过，没有才生成。
-                    # 0 字节文件视为没生成成功，重新写一次。
+                    # 增量：本地已有就算过一遍，但仍校验 strm 里的链接；
+                    # 链接和当前前缀/路径不一致（换过前缀、换过源）才更新。
                     try:
-                        size = target.stat().st_size
+                        old = target.read_text(encoding="utf-8", errors="ignore")
                     except OSError:
-                        size = 0
-                    action = "skip" if size > 0 else "create"
+                        old = ""
+                    action = "skip" if old.strip() == content.strip() else "update"
                 else:
                     action = "create"
+                if migrated is not None:
+                    counts["migrate"] += 1
                 counts[action] += 1
                 writes.append(
                     {
@@ -317,6 +407,7 @@ class StrmGenerator:
                         "rel": strm_rel,
                         "size": entry["size"],
                         "remote": entry["path"],
+                        "migrated_from": str(migrated) if migrated else "",
                     }
                 )
                 if len(items) < PLAN_ITEM_LIMIT:
@@ -326,11 +417,19 @@ class StrmGenerator:
                             "action": action,
                             "size": entry["size"],
                             "remote": entry["path"],
+                            "migrated": bool(migrated),
                         }
                     )
             elif extra_exts and ext in extra_exts:
-                rel = f"{rel_dir}/{name}" if rel_dir else name
+                rel = mirrored
                 target = local_root / rel
+                under_root = _rel_under_root(remote_root, entry["path"])
+                legacy = [local_root / under_root]
+                if prev_local is not None:
+                    legacy.append(prev_local / under_root)
+                    legacy.append(prev_local / rel)
+                if not target.exists() and _move_legacy(target, legacy) is not None:
+                    counts["migrate"] += 1
                 if target.exists():
                     counts["extra_skip"] += 1
                     continue
@@ -341,11 +440,14 @@ class StrmGenerator:
                         {"rel": rel, "action": "extra", "size": entry["size"], "remote": entry["path"]}
                     )
 
-        # 重建模式：删除网盘已不存在的本地 strm（按任务开关）
+        # 重建模式：删除网盘已不存在的本地 strm（限定在本任务自己的镜像目录里）
         deletes: list[Path] = []
-        if task.get("rebuild") and local_root.is_dir():
-            for path in local_root.rglob("*.strm"):
+        roots = [p for p in (other_roots or []) if p]
+        if task.get("rebuild") and task_dir.is_dir():
+            for path in task_dir.rglob("*.strm"):
                 if str(path) in keep:
+                    continue
+                if any(_is_under(path, root) for root in roots):
                     continue
                 deletes.append(path)
                 if len(items) < PLAN_ITEM_LIMIT:
@@ -394,7 +496,15 @@ class StrmGenerator:
             LogBus.STRM,
         )
 
-        totals = {"create": 0, "update": 0, "skip": 0, "delete": 0, "extra": 0, "extra_skip": 0}
+        totals = {
+            "create": 0,
+            "update": 0,
+            "skip": 0,
+            "delete": 0,
+            "extra": 0,
+            "extra_skip": 0,
+            "migrate": 0,
+        }
         failed = 0
         files_seen = 0
         errors: list[str] = []
@@ -407,12 +517,15 @@ class StrmGenerator:
             task_started = time.time()
             task_mode = normalize_mode(override_mode or task.get("mode"))
             local_root = Path(task["local"])
+            local_dir = local_root / _mirror_rel(task["remote"])
             label = task.get("name") or task.get("remote")
             self.bus.info(
-                f"　└─ [{MODE_LABEL[task_mode]}] {label}：{task['remote']} → {local_root}",
+                f"　└─ [{MODE_LABEL[task_mode]}] {label}：{task['remote']} → {local_dir}",
                 LogBus.STRM,
             )
-            built = self._build_task(cfg, client, task, errors, mode=task_mode)
+            built = self._build_task(
+                cfg, client, task, errors, mode=task_mode, other_roots=_other_roots(cfg, task)
+            )
             files_seen += built["files"]
             counts = built["counts"]
             for key in totals:
@@ -499,6 +612,7 @@ class StrmGenerator:
                     "created": counts["create"],
                     "updated": counts["update"],
                     "skipped": counts["skip"],
+                    "migrated": counts["migrate"],
                     "deleted": counts["delete"],
                     "extras": counts["extra"],
                     "failed": task_failed,
@@ -514,7 +628,9 @@ class StrmGenerator:
 
             self.bus.info(
                 f"　└─ {label} 完成：新增 {counts['create']} / 更新 {counts['update']} / "
-                f"跳过 {counts['skip']}" + (f" / 删除 {counts['delete']}" if counts["delete"] else ""),
+                f"跳过 {counts['skip']}"
+                + (f" / 迁移 {counts['migrate']}" if counts["migrate"] else "")
+                + (f" / 删除 {counts['delete']}" if counts["delete"] else ""),
                 LogBus.STRM,
             )
             if stopped:
@@ -522,6 +638,7 @@ class StrmGenerator:
 
         note = (
             f"新增 {totals['create']} / 更新 {totals['update']} / 跳过 {totals['skip']}"
+            + (f" / 迁移 {totals['migrate']}" if totals["migrate"] else "")
             + (f" / 删除 {totals['delete']}" if totals["delete"] else "")
             + (f" / 附件 {totals['extra']}" if totals["extra"] or totals["extra_skip"] else "")
             + (f" / 失败 {failed}" if failed else "")
@@ -541,6 +658,7 @@ class StrmGenerator:
             created=totals["create"],
             updated=totals["update"],
             skipped=totals["skip"],
+            migrated=totals["migrate"],
             deleted=totals["delete"],
             extras=totals["extra"],
             extras_skipped=totals["extra_skip"],

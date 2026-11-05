@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.8.2.fpk    # 当前版本安装包
+└── embyprewarm-1.9.0.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.8.2](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.0](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.8.2.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.0.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.8.2.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.0.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -75,8 +75,9 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 1. 填 OpenList 地址 + 长期令牌（或账号密码）、STRM 前缀（`http://IP:5244/d` 或 rclone 挂载根），
    点「测试 OpenList 连接」确认可用
-2. 点「添加目录」添加生成任务：网盘目录可以直接**从 OpenList 目录树里浏览选择**，本地目录填写
-   strm 输出位置；每个目录一个独立任务
+2. 点「添加目录」添加生成任务：网盘目录可以直接**从 OpenList 目录树里浏览选择**；「本地根目录」
+   填镜像根，strm 会落在 `根目录 + 网盘完整路径` 下（例如网盘 `/2dland/动画`、根 `/vol2/…/strm`，
+   实际输出 `/vol2/…/strm/2dland/动画/…`），目录结构与网盘完全一致，多个任务可共用同一个根
 3. 每个任务可单独：启用/停用、设置**每天多个定时时刻**、选择默认「增量」或「全量」模式、
    是否清理网盘已删除的 strm
 4. 每个任务卡片上有「增量生成」「全量生成」按钮，点开后先看明细预览（新增/更新/跳过/删除），
@@ -86,11 +87,12 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 | 模式 | 对比方式 | 适合场景 |
 | --- | --- | --- |
-| 增量 | 拿网盘目录和本地目标目录比：本地已有同名 `.strm` 就跳过（不读内容、不改动），缺的才生成 | 日常定时跑，只补新片，速度快 |
-| 全量 | 不看本地是否已存在，整目录重写一遍 | 改了 STRM 前缀、要修复内容不一致 |
+| 增量 | 逐个对比网盘文件与本地镜像目录：本地没有的生成（新增）；已有的会**校验 strm 里的链接**，一致就跳过，不一致（换过前缀/换过源）才更新 | 日常定时跑，只补新片、自动纠正旧链接 |
+| 全量 | 不看本地是否已存在，整目录重写一遍 | 大批量改前缀、需要彻底重建 |
 
-> 增量为「只补缺」，所以**换了前缀或端口之后要跑一次全量**，已有 strm 才会更新。
 > 附件（nfo/字幕/海报）在任何模式下都只补缺失文件，不重复下载。
+> 从旧版本升级：本地目录含义变为「镜像根」，首次运行会把旧布局（直接落在根目录下的 strm）
+> 自动搬移到 `根目录/网盘完整路径` 的新结构里，日志里会显示「迁移」数量。
 
 生成后**不主动预热**——等 Emby 扫描到新 strm 并发出入库通知（Webhooks `library.new`），
 本工具收到通知再触发增量预热，形成闭环：

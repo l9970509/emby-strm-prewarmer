@@ -788,7 +788,7 @@ function renderStrmTasks() {
       </div>
       <div class="stc-paths">
         <div><span>网盘</span><code title="${escapeHtml(t.remote)}">${escapeHtml(t.remote)}</code></div>
-        <div><span>本地</span><code title="${escapeHtml(t.local)}">${escapeHtml(t.local)}</code></div>
+        <div><span>输出</span><code title="根目录 ${escapeHtml(t.local)}">${escapeHtml(taskOutputDir(t))}</code></div>
       </div>
       <div class="stc-meta" data-task-meta="${escapeHtml(t.id)}">
         <span class="stc-last">${escapeHtml(taskLastText(info))}</span>
@@ -802,6 +802,26 @@ function renderStrmTasks() {
       </div>
     </article>`;
   }).join('');
+}
+
+/* 本地根目录 + 网盘完整路径 = 实际落盘目录 */
+function taskOutputDir(task) {
+  const root = String((task && task.local) || '').replace(/\/+$/, '');
+  const remote = String((task && task.remote) || '').replace(/^\/+/, '');
+  return remote ? `${root}/${remote}` : root;
+}
+
+function updateLocalPreview() {
+  const root = ($('#taskLocal').value || '').trim().replace(/\/+$/, '');
+  const remote = ($('#taskRemote').value || '').trim().replace(/^\/+/, '');
+  const box = $('#taskLocalPreview');
+  if (!box) return;
+  if (!root) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  $('#taskLocalPreviewPath').textContent = remote ? `${root}/${remote}` : root;
 }
 
 function updateStrmTaskStatus() {
@@ -844,6 +864,7 @@ function openTaskModal(taskId) {
   setSeg('taskMode', task ? task.mode : 'incremental');
   $('#taskTime').value = '';
   renderTaskTimes();
+  updateLocalPreview();
   showMask('#taskModalMask');
 }
 
@@ -991,6 +1012,8 @@ $('#btnCancelTask').addEventListener('click', closeTaskModal);
 $('#taskModalMask').addEventListener('click', (e) => {
   if (e.target === $('#taskModalMask')) closeTaskModal();
 });
+$('#taskRemote').addEventListener('input', updateLocalPreview);
+$('#taskLocal').addEventListener('input', updateLocalPreview);
 $('#btnSaveTask').addEventListener('click', saveTaskModal);
 $('#btnAddTaskTime').addEventListener('click', addTaskTime);
 $('#taskTime').addEventListener('keydown', (e) => {
@@ -1128,6 +1151,7 @@ async function loadStrmPlan() {
       text += '<div class="plan-groups">' + plan.groups.map((g) => {
         const c = g.counts || {};
         let line = `${escapeHtml(g.name)}：新增 ${c.create || 0} / 更新 ${c.update || 0} / 跳过 ${c.skip || 0}`;
+        if (c.migrate) line += ` / 迁移 ${c.migrate}`;
         if (c.delete) line += ` / 删除 ${c.delete}`;
         return line;
       }).join('<br>') + '</div>';

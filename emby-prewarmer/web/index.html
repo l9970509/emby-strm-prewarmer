@@ -604,10 +604,14 @@
         <em>点「浏览」直接从已连接的 OpenList 目录树里选，不用手打路径</em>
       </label>
       <label class="field">
-        <span>本地目录</span>
-        <input type="text" id="taskLocal" placeholder="/vol2/1000/strm/movie">
-        <em>strm 会按网盘结构写到这里，例如 <code>电影/沙丘 (2024)/沙丘 (2024).strm</code></em>
+        <span>本地根目录</span>
+        <input type="text" id="taskLocal" placeholder="/vol2/1000/影视库/Ostrm/strm">
+        <em>按网盘完整路径镜像，多个任务可以共用一个根。目录结构与网盘完全一致。</em>
       </label>
+      <div class="path-preview" id="taskLocalPreview" hidden>
+        <span>实际输出</span>
+        <code id="taskLocalPreviewPath">—</code>
+      </div>
       <div class="grid2">
         <label class="field switch-field"><span>启用此任务</span><label class="switch"><input type="checkbox" id="taskEnabled" checked><i></i></label></label>
         <label class="field switch-field"><span>清理网盘已删除的 strm</span><label class="switch"><input type="checkbox" id="taskRebuild"><i></i></label></label>
