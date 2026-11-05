@@ -1108,10 +1108,17 @@ function renderStrmPlanList() {
     list.innerHTML = items.map((it) => {
       const tag = STRM_ACTION_LABEL[it.action] || it.action;
       const cls = it.action === 'create' ? 'plan-copy' : it.action === 'delete' ? 'plan-del' : 'plan-skip';
-      return `<div class="plan-item">
+      const diff = it.action === 'update'
+        ? `<div class="plan-diff">
+             <span>本地现有</span><code title="${escapeHtml(it.prev || '(空文件)')}">${escapeHtml(it.prev || '(空文件)')}</code>
+             <span>本次写入</span><code title="${escapeHtml(it.next || '')}">${escapeHtml(it.next || '')}</code>
+           </div>`
+        : '';
+      return `<div class="plan-item ${diff ? 'has-diff' : ''}">
         <span class="plan-tag ${cls}">${tag}</span>
         <span class="plan-path" title="${escapeHtml(it.remote || it.rel)}">${escapeHtml(it.rel)}</span>
         <span class="plan-size">${fmtSize(it.size)}</span>
+        ${diff}
       </div>`;
     }).join('');
   }

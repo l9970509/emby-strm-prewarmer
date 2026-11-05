@@ -389,6 +389,21 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
 }
 .plan-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
 .plan-size { flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 增量判为「更新」时，列出本地内容与本次要写入的内容，差异一目了然 */
+.plan-item.has-diff { flex-wrap: wrap; align-items: flex-start; }
+.plan-diff {
+  flex: 1 0 100%;
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+  margin: 4px 0 2px 0;
+  font-size: 11.5px; line-height: 1.5;
+}
+.plan-diff span { color: var(--muted); white-space: nowrap; }
+.plan-diff code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .modal-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 12px 20px 16px;

@@ -5,8 +5,8 @@
 - 目录结构与网盘一致，`影片.mkv` → `影片.strm`；
 - 每个目录是独立任务：可单独启用/停用、单独定时（支持一天多个时刻）、
   单独手动生成，并各自选择「增量」或「全量」模式；
-- 增量：对比网盘目录与本地上次生成的目标目录，本地已有该 strm 就跳过，
-  缺失才生成（只补缺，不改动已有文件；改前缀请用全量）；
+- 增量：逐项对比网盘目录与本地镜像目录——缺失的生成；已有的校验 strm 内链接，
+  一致就跳过（BOM、CRLF、百分号编码大小写等等价写法也算一致），链接真的变了才更新；
 - 全量：忽略是否已存在，整目录重写一遍（改前缀 / 修复内容不一致时用）；
 - 可选一并下载 nfo / 字幕 / 海报等小文件（按扩展名白名单 + 大小上限）；
 - 重建模式（按任务）：网盘已删除的影片，同步删除本地多余 strm；
@@ -20,6 +20,7 @@ import os
 import shutil
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,46 @@ def _rel_under_root(remote_root: str, remote_path: str) -> str:
 def _mirror_rel(remote_path: str) -> str:
     """网盘完整路径 → 相对本地根目录的路径（镜像根：保留 /2dland/动画 这样的层级）。"""
     return remote_path.strip("/")
+
+
+def _norm_strm_text(text: str) -> str:
+    """规范化 strm 内容：去 BOM、统一换行、去首尾空白。"""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    text = text.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+    return text.strip()
+
+
+def _is_dirty_strm(text: str) -> bool:
+    """文件是否带了需要顺手清理的痕迹（BOM / Windows 换行 / 缺结尾换行）。"""
+    return text.startswith("\ufeff") or "\r" in text or not text.endswith("\n")
+
+
+def _same_strm_content(old: str, new: str) -> bool:
+    """判断本地 strm 是否已经指向同一个地址。
+
+    只做字面比较会把等价写法当成"内容不同"，于是增量每次都提示更新：
+    - 记事本另存过的文件带 UTF-8 BOM；
+    - Windows 换行 CRLF；
+    - 百分号编码大小写不同（%e7 与 %E7）；
+    - %20 与 + 表示空格；
+    - 中文做了 URL 编码还是原样留着。
+    以上都按 URL 语义视为同一个链接。
+    """
+    a = _norm_strm_text(old)
+    b = _norm_strm_text(new)
+    if a == b:
+        return True
+    if not a or not b:
+        return False
+    try:
+        da, db = urllib.parse.unquote(a), urllib.parse.unquote(b)
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if da == db:
+        return True
+    # + 在某些客户端里表示空格，两种写法指向同一文件
+    return da.replace("+", " ") == db.replace("+", " ")
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -383,17 +424,28 @@ class StrmGenerator:
                     migrated = _move_legacy(target, legacy)
 
                 exists = target.exists()
+                normalize = False
+                prev_text = ""
                 if full:
                     # 全量：不看旧内容，全部重写（已有算更新，没有算新增）
                     action = "update" if exists else "create"
                 elif exists:
-                    # 增量：本地已有就算过一遍，但仍校验 strm 里的链接；
-                    # 链接和当前前缀/路径不一致（换过前缀、换过源）才更新。
+                    # 增量：本地已有就校验 strm 里的链接。
+                    # 只有「指向的真正地址变了」（换前缀 / 换源 / 换了路径）才更新；
+                    # BOM、CRLF、编码大小写这类等价写法不算变化。
                     try:
                         old = target.read_text(encoding="utf-8", errors="ignore")
                     except OSError:
                         old = ""
-                    action = "skip" if old.strip() == content.strip() else "update"
+                    if _same_strm_content(old, content):
+                        action = "skip"
+                        # 文件内容已经对了，但带着 BOM/CRLF：顺手写回标准格式，
+                        # 不计入「更新」，用户也就不会看到反复提示。
+                        normalize = _is_dirty_strm(old)
+                    else:
+                        action = "update"
+                        # 留着本地旧内容，预览里给出前后对比，方便判断差在哪
+                        prev_text = _norm_strm_text(old)[:600]
                 else:
                     action = "create"
                 if migrated is not None:
@@ -408,6 +460,7 @@ class StrmGenerator:
                         "size": entry["size"],
                         "remote": entry["path"],
                         "migrated_from": str(migrated) if migrated else "",
+                        "normalize": normalize,
                     }
                 )
                 if len(items) < PLAN_ITEM_LIMIT:
@@ -418,6 +471,8 @@ class StrmGenerator:
                             "size": entry["size"],
                             "remote": entry["path"],
                             "migrated": bool(migrated),
+                            "prev": prev_text,
+                            "next": content.strip()[:600] if action == "update" else "",
                         }
                     )
             elif extra_exts and ext in extra_exts:
@@ -538,11 +593,20 @@ class StrmGenerator:
                     stopped = True
                     break
                 if item["action"] == "skip":
+                    if item.get("normalize"):
+                        # 内容本来就指向同一地址，只是格式带了 BOM / CRLF：
+                        # 静默写回标准格式，不计量、不写日志，避免用户看到"更新"。
+                        try:
+                            tmp = item["path"].with_suffix(item["path"].suffix + ".tmp")
+                            tmp.write_text(item["content"], encoding="utf-8", newline="\n")
+                            os.replace(tmp, item["path"])
+                        except OSError:
+                            pass
                     continue
                 try:
                     item["path"].parent.mkdir(parents=True, exist_ok=True)
                     tmp = item["path"].with_suffix(item["path"].suffix + ".tmp")
-                    tmp.write_text(item["content"], encoding="utf-8")
+                    tmp.write_text(item["content"], encoding="utf-8", newline="\n")
                     os.replace(tmp, item["path"])
                     if log_lines < LOG_DETAIL_LIMIT:
                         mark = "新增" if item["action"] == "create" else "更新"

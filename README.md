@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.0.fpk    # 当前版本安装包
+└── embyprewarm-1.9.1.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.0](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.1](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.0.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.1.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.0.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.1.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -87,7 +87,7 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 | 模式 | 对比方式 | 适合场景 |
 | --- | --- | --- |
-| 增量 | 逐个对比网盘文件与本地镜像目录：本地没有的生成（新增）；已有的会**校验 strm 里的链接**，一致就跳过，不一致（换过前缀/换过源）才更新 | 日常定时跑，只补新片、自动纠正旧链接 |
+| 增量 | 逐个对比网盘文件与本地镜像目录：本地没有的生成（新增）；已有的会**校验 strm 里的链接**，一致就跳过，不一致（换过前缀/换过源）才更新。BOM、CRLF、编码大小写（%e7/%E7）、%20 与 +、中文是否编码这些等价写法不算差异 | 日常定时跑，只补新片、自动纠正旧链接 |
 | 全量 | 不看本地是否已存在，整目录重写一遍 | 大批量改前缀、需要彻底重建 |
 
 > 附件（nfo/字幕/海报）在任何模式下都只补缺失文件，不重复下载。
