@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.8.1.fpk    # 当前版本安装包
+└── embyprewarm-1.8.2.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.8.1](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.8.2](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.8.1.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.8.2.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.8.1.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.8.2.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -81,6 +81,16 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
    是否清理网盘已删除的 strm
 4. 每个任务卡片上有「增量生成」「全量生成」按钮，点开后先看明细预览（新增/更新/跳过/删除），
    确认后才写盘；顶部「全部生成」按各任务自己的模式一起跑
+
+两种模式的区别（都只作用于该任务自己的目录）：
+
+| 模式 | 对比方式 | 适合场景 |
+| --- | --- | --- |
+| 增量 | 拿网盘目录和本地目标目录比：本地已有同名 `.strm` 就跳过（不读内容、不改动），缺的才生成 | 日常定时跑，只补新片，速度快 |
+| 全量 | 不看本地是否已存在，整目录重写一遍 | 改了 STRM 前缀、要修复内容不一致 |
+
+> 增量为「只补缺」，所以**换了前缀或端口之后要跑一次全量**，已有 strm 才会更新。
+> 附件（nfo/字幕/海报）在任何模式下都只补缺失文件，不重复下载。
 
 生成后**不主动预热**——等 Emby 扫描到新 strm 并发出入库通知（Webhooks `library.new`），
 本工具收到通知再触发增量预热，形成闭环：

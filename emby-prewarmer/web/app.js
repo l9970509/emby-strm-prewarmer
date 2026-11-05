@@ -795,8 +795,8 @@ function renderStrmTasks() {
         <span class="stc-next">${escapeHtml(next)}</span>
       </div>
       <div class="stc-ops">
-        <button class="btn sm primary js-task-run" data-mode="incremental" type="button">增量生成</button>
-        <button class="btn sm js-task-run" data-mode="full" type="button">全量生成</button>
+        <button class="btn sm primary js-task-run" data-mode="incremental" type="button" title="对比本地目标目录：已有 strm 就跳过，缺的才生成">增量生成</button>
+        <button class="btn sm js-task-run" data-mode="full" type="button" title="不看是否已存在，整目录重写一遍（改前缀后用）">全量生成</button>
         <button class="btn sm ghost js-task-edit" type="button">编辑</button>
         <button class="btn sm ghost danger js-task-del" type="button">删除</button>
       </div>

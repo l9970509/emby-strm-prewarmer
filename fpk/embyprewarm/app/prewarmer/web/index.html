@@ -329,7 +329,7 @@
           <button class="btn sm primary" id="btnAddStrmTask" type="button">＋ 添加目录</button>
         </div>
       </div>
-      <p class="panel-hint">每个目录是一个独立任务：可单独启用、单独设置每天定时（支持多个时刻），并单独执行「增量」或「全量」生成。生成后不主动预热，由 Emby 入库通知触发。</p>
+      <p class="panel-hint">每个目录是一个独立任务：可单独启用、单独设置每天定时（支持多个时刻），并单独执行「增量」或「全量」生成。增量只补本地缺失的 strm，已有文件不动；生成后不主动预热，由 Emby 入库通知触发。</p>
       <div class="strm-task-grid" id="strmTaskList">
         <div class="empty">尚未配置任务，点右上角「添加目录」</div>
       </div>
@@ -618,7 +618,7 @@
           <button type="button" data-mode="incremental">增量</button>
           <button type="button" data-mode="full">全量</button>
         </div>
-        <em>增量只写新增/变化的文件；全量每次重写该目录下全部 strm（附件仍只补缺失）</em>
+        <em>增量会对比网盘与本地目标目录：本地已有该 strm 就跳过，缺的才生成；全量则整目录重写一遍（改前缀后用全量）。附件始终只补缺失。</em>
       </div>
       <div class="field">
         <label class="switch-field"><span>每天定时生成</span><label class="switch"><input type="checkbox" id="taskSched"><i></i></label></label>

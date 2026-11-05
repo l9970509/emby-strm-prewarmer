@@ -5,7 +5,9 @@
 - 目录结构与网盘一致，`影片.mkv` → `影片.strm`；
 - 每个目录是独立任务：可单独启用/停用、单独定时（支持一天多个时刻）、
   单独手动生成，并各自选择「增量」或「全量」模式；
-- 增量：本地已存在且内容一致的 strm 跳过；全量：忽略已存在内容，全部重写；
+- 增量：对比网盘目录与本地上次生成的目标目录，本地已有该 strm 就跳过，
+  缺失才生成（只补缺，不改动已有文件；改前缀请用全量）；
+- 全量：忽略是否已存在，整目录重写一遍（改前缀 / 修复内容不一致时用）；
 - 可选一并下载 nfo / 字幕 / 海报等小文件（按扩展名白名单 + 大小上限）；
 - 重建模式（按任务）：网盘已删除的影片，同步删除本地多余 strm；
 - 生成完不主动预热：由 Emby 扫描到新 .strm 后发出入库通知（Webhooks library.new），
@@ -297,11 +299,13 @@ class StrmGenerator:
                     # 全量：不看旧内容，全部重写（已有算更新，没有算新增）
                     action = "update" if exists else "create"
                 elif exists:
+                    # 增量：只要本地目标目录里已经有这个 strm 就跳过，没有才生成。
+                    # 0 字节文件视为没生成成功，重新写一次。
                     try:
-                        old = target.read_text(encoding="utf-8", errors="ignore")
+                        size = target.stat().st_size
                     except OSError:
-                        old = ""
-                    action = "skip" if old.strip() == content.strip() else "update"
+                        size = 0
+                    action = "skip" if size > 0 else "create"
                 else:
                     action = "create"
                 counts[action] += 1
