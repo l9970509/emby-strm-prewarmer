@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.2.fpk    # 当前版本安装包
+└── embyprewarm-1.9.3.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.2](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.3](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.2.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.3.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.2.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.3.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -97,6 +97,25 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 > 附件（nfo/字幕/海报）在任何模式下都只补缺失文件，不重复下载。
 > 从旧版本升级：本地目录含义变为「镜像根」，首次运行会把旧布局（直接落在根目录下的 strm）
 > 自动搬移到 `根目录/网盘完整路径` 的新结构里，日志里会显示「迁移」数量。
+
+执行时「生成」页的日志会逐条列出每个文件做了什么，每个任务独立成段：
+
+```
+📼 开始生成 STRM（手动生成）：2 个任务 · 强制增量模式 · 前缀 http://192.168.101.99:5244/d
+　└─ [增量] 电影：/2dland/电影 → /vol2/1000/影视库/Ostrm/strm/2dland/电影
+　　扫描 42 个远端文件：新增 2 / 更新 0 / 跳过 40 / 迁移 0 / 删除 0 / 附件 1
+　　✓ 新增 2dland/电影/沙丘 (2024)/沙丘 (2024).strm
+　　⤓ 附件 2dland/电影/沙丘 (2024)/poster.jpg
+　└─ 电影 完成（0.6 秒）：新增 2 / 更新 0 / 跳过 40
+　└─ [增量] 剧集：/2dland/剧集 → /vol2/1000/影视库/Ostrm/strm/2dland/剧集
+　　扫描 5 个远端文件：新增 0 / 更新 0 / 跳过 5 / 迁移 0 / 删除 0 / 附件 0
+　　✓ 全部已是最新，本次没有需要写入的文件
+　└─ 剧集 完成（0.1 秒）：新增 0 / 更新 0 / 跳过 5
+```
+
+- 每个任务都有自己的明细额度（手动 2000 条 / 定时 300 条），前面的任务不会把后面的额度用光
+- 明细超限时会明确写出「另有 N 条未逐条显示」，不会静默省略
+- 全部跳过时也会输出扫描结果与「全部已是最新」，不会再出现"点了没反应"的错觉
 
 生成后**不主动预热**——等 Emby 扫描到新 strm 并发出入库通知（Webhooks `library.new`），
 本工具收到通知再触发增量预热，形成闭环：

@@ -191,7 +191,7 @@ function appendLogs(box, lines, channel) {
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
   box.appendChild(frag);
-  while (box.childElementCount > 1500) box.removeChild(box.firstChild);
+  while (box.childElementCount > 4000) box.removeChild(box.firstChild);
   const auto = channel === 'sync' ? el.autoScrollSync : el.autoScroll;
   if (auto.checked || atBottom) box.scrollTop = box.scrollHeight;
 }

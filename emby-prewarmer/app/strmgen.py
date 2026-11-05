@@ -31,8 +31,10 @@ from .state import LogBus, Store
 # 预览/通知明细上限（超出只给统计）
 PLAN_ITEM_LIMIT = 1000
 NOTIFY_DETAIL_LIMIT = 80
-# 单次执行写入的详细日志上限，避免几万条刷屏
+# 每个任务的详细日志上限（按任务独立计算，避免前面的任务把额度用光）。
+# 手动点击时明细给足，定时任务收紧一些，防止几万条刷屏。
 LOG_DETAIL_LIMIT = 300
+MANUAL_LOG_DETAIL_LIMIT = 2000
 
 DEFAULT_MEDIA_EXTS = "mkv,mp4,ts,m2ts,iso,avi,wmv,mov,flv,rmvb,webm,mpg,mpeg"
 DEFAULT_EXTRA_EXTS = "nfo,srt,ass,ssa,sub,sup,vtt,jpg,jpeg,png,webp"
@@ -278,7 +280,7 @@ class StrmGenerator:
                     "name": task.get("name") or task.get("remote"),
                     "remote": task.get("remote"),
                     "local": task.get("local"),
-                    "local_dir": str(Path(task["local"]) / _mirror_rel(task["remote"])),
+                    "local_dir": (Path(task["local"]) / _mirror_rel(task["remote"])).as_posix(),
                     "mode": task_mode,
                     "counts": built["counts"],
                 }
@@ -583,7 +585,10 @@ class StrmGenerator:
         files_seen = 0
         errors: list[str] = []
         details: list[dict[str, str]] = []
-        log_lines = 0
+        # 明细额度按任务独立计算：手动点击给足，定时任务收紧
+        per_task_limit = (
+            MANUAL_LOG_DETAIL_LIMIT if reason.startswith("手动") else LOG_DETAIL_LIMIT
+        )
         stopped = False
         states = self.task_states()
 
@@ -591,7 +596,7 @@ class StrmGenerator:
             task_started = time.time()
             task_mode = normalize_mode(override_mode or task.get("mode"))
             local_root = Path(task["local"])
-            local_dir = local_root / _mirror_rel(task["remote"])
+            local_dir = (local_root / _mirror_rel(task["remote"])).as_posix()
             label = task.get("name") or task.get("remote")
             self.bus.info(
                 f"　└─ [{MODE_LABEL[task_mode]}] {label}：{task['remote']} → {local_dir}",
@@ -605,6 +610,27 @@ class StrmGenerator:
             for key in totals:
                 totals[key] += counts[key]
             task_failed = 0
+            task_log = 0
+            # 本次任务实际会产生多少条明细行（用于判断是否被截断）
+            task_lines = sum(
+                1
+                for item in built["writes"]
+                if item["action"] != "skip" or item.get("migrated_from")
+            )
+            task_lines += len(built["downloads"]) + len(built["deletes"])
+            self.bus.info(
+                f"　　扫描 {built['files']} 个远端文件：新增 {counts['create']} / "
+                f"更新 {counts['update']} / 跳过 {counts['skip']} / 迁移 {counts['migrate']} / "
+                f"删除 {counts['delete']} / 附件 {counts['extra']}"
+                + (
+                    f"（另有 {counts['extra_skip']} 个已存在）"
+                    if counts["extra_skip"]
+                    else ""
+                ),
+                LogBus.STRM,
+            )
+            if task_lines == 0:
+                self.bus.ok("　　✓ 全部已是最新，本次没有需要写入的文件", LogBus.STRM)
 
             for item in built["writes"]:
                 if self._stop.is_set():
@@ -621,16 +647,21 @@ class StrmGenerator:
                             os.replace(tmp, item["path"])
                         except OSError:
                             pass
+                    if item.get("migrated_from") and task_log < per_task_limit:
+                        self.bus.info(f"　　⇄ 迁移 {item['rel']}", LogBus.STRM)
+                        task_log += 1
                     continue
                 try:
                     item["path"].parent.mkdir(parents=True, exist_ok=True)
                     tmp = item["path"].with_suffix(item["path"].suffix + ".tmp")
                     tmp.write_text(item["content"], encoding="utf-8", newline="\n")
                     os.replace(tmp, item["path"])
-                    if log_lines < LOG_DETAIL_LIMIT:
+                    if task_log < per_task_limit:
                         mark = "新增" if item["action"] == "create" else "更新"
+                        if item.get("migrated_from"):
+                            mark += "（迁移）"
                         self.bus.ok(f"　　✓ {mark} {item['rel']}", LogBus.STRM)
-                        log_lines += 1
+                        task_log += 1
                     details.append(
                         {
                             "rel": item["rel"],
@@ -659,9 +690,9 @@ class StrmGenerator:
                 try:
                     item["path"].parent.mkdir(parents=True, exist_ok=True)
                     client.download(item["remote"], item["path"], max_bytes=max_bytes)
-                    if log_lines < LOG_DETAIL_LIMIT:
+                    if task_log < per_task_limit:
                         self.bus.ok(f"　　⤓ 附件 {item['rel']}", LogBus.STRM)
-                        log_lines += 1
+                        task_log += 1
                 except OpenListError as exc:
                     totals["extra"] -= 1
                     totals["extra_skip"] += 1
@@ -674,9 +705,9 @@ class StrmGenerator:
             for path in built["deletes"]:
                 try:
                     path.unlink()
-                    if log_lines < LOG_DETAIL_LIMIT:
+                    if task_log < per_task_limit:
                         self.bus.info(f"　　− 删除 {path.name}", LogBus.STRM)
-                        log_lines += 1
+                        task_log += 1
                 except OSError as exc:
                     failed += 1
                     task_failed += 1
@@ -709,11 +740,18 @@ class StrmGenerator:
             except Exception:
                 pass
 
+            if task_lines > task_log:
+                self.bus.info(
+                    f"　　… 明细较多，另有 {task_lines - task_log} 条未逐条显示"
+                    f"（本次共 {task_lines} 条变动，完整清单见「生成」预览）",
+                    LogBus.STRM,
+                )
             self.bus.info(
-                f"　└─ {label} 完成：新增 {counts['create']} / 更新 {counts['update']} / "
-                f"跳过 {counts['skip']}"
+                f"　└─ {label} 完成（{round(time.time() - task_started, 1)} 秒）："
+                f"新增 {counts['create']} / 更新 {counts['update']} / 跳过 {counts['skip']}"
                 + (f" / 迁移 {counts['migrate']}" if counts["migrate"] else "")
-                + (f" / 删除 {counts['delete']}" if counts["delete"] else ""),
+                + (f" / 删除 {counts['delete']}" if counts["delete"] else "")
+                + (f" / 失败 {task_failed}" if task_failed else ""),
                 LogBus.STRM,
             )
             if stopped:
