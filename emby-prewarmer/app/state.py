@@ -21,6 +21,13 @@ def fmt_ts(ts: float | None) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
+# 指纹记录格式版本。v2 起 .strm 的 sha256 改为按「URL 语义」计算：
+# BOM / CRLF / 百分号编码大小写 / %20 与 + 等等价写法哈希相同，
+# 不会因为增量生成顺手规范化了格式而被误判为「内容更新」重新预热。
+# v1（旧记录无 v 字段）在扫描时静默迁移到 v2，不触发预热。
+FP_VERSION = 2
+
+
 class LogBus:
     """环形日志缓冲 + 落盘，供面板轮询增量拉取。
 
@@ -245,7 +252,11 @@ class Store:
 
     def set_fingerprint(self, item_id: str, path: str, fingerprint: dict[str, Any]) -> None:
         with self._lock:
-            self.data["fingerprints"][item_id] = {"path": path, **fingerprint}
+            self.data["fingerprints"][item_id] = {
+                "path": path,
+                "v": FP_VERSION,
+                **fingerprint,
+            }
 
     # -------------------------------------------------------------- 历史
     def add_history(self, entry: dict[str, Any]) -> None:

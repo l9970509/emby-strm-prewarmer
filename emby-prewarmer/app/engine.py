@@ -15,6 +15,7 @@ import html
 import json
 import threading
 import time
+import urllib.parse
 import urllib.request
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, replace
@@ -25,7 +26,7 @@ from typing import Any
 from . import mediainfo
 from .config import ConfigStore
 from .emby import ITEM_FIELDS, EmbyClient, EmbyError, describe_video, has_complete_video
-from .state import LogBus, Store, now_iso
+from .state import FP_VERSION, LogBus, Store, now_iso
 
 MODES = {
     "full": "一键预热",
@@ -62,6 +63,27 @@ def _host_path(emby_path: str, mappings: dict[str, str]) -> Path | None:
     return direct if direct.is_file() else None
 
 
+def _strm_semantic_text(content: bytes) -> str | None:
+    """strm 内容的 URL 语义形态：等价写法归一成同一个字符串。
+
+    与 strmgen 的增量比对同一套规则：去 BOM、统一换行、去首尾空白，
+    再把百分号编码解码（%E7/%e7、%20 与 + 同义），使
+    「内容指向同一个地址」的不同字节形态哈希一致。
+    """
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    try:
+        text = urllib.parse.unquote(text)
+    except (UnicodeDecodeError, ValueError):
+        pass
+    return text.replace("+", " ")
+
+
 def fingerprint_of(emby_path: str, mappings: dict[str, str]) -> dict[str, Any] | None:
     local = _host_path(emby_path, mappings)
     if local is None:
@@ -70,7 +92,18 @@ def fingerprint_of(emby_path: str, mappings: dict[str, str]) -> dict[str, Any] |
         content = local.read_bytes()
     except OSError:
         return None
-    return {"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+    fp: dict[str, Any] = {"size": len(content)}
+    # .strm 用语义哈希：增量生成顺手把 BOM/CRLF 规范化写回不算「换源」；
+    # 其余文件维持原始字节哈希。
+    if local.suffix.lower() == ".strm":
+        semantic = _strm_semantic_text(content)
+        if semantic is None:
+            fp["sha256"] = hashlib.sha256(content).hexdigest()
+        else:
+            fp["sha256"] = hashlib.sha256(semantic.encode("utf-8")).hexdigest()
+    else:
+        fp["sha256"] = hashlib.sha256(content).hexdigest()
+    return fp
 
 
 class Engine:
@@ -237,14 +270,23 @@ class Engine:
                 targets, complete_targets, summary = self._collect(client, cfg)
                 collect_summary = summary
                 self.store.set_summary({**summary, "ts": time.time()})
+                changed_note = (
+                    f" / 内容有更新 {summary['changed']} 个" if summary.get("changed") else ""
+                )
                 self.bus.info(
                     f"扫描完成：STRM {summary['total']} 个 / 已完整 {summary['complete']} 个 / "
-                    f"待预热 {summary['pending']} 个 / 失败队列 {self.store.failure_count()} 个"
+                    f"待预热 {summary['pending']} 个{changed_note} / "
+                    f"失败队列 {self.store.failure_count()} 个"
                 )
-                if summary["unreadable"]:
+                if summary.get("unreadable"):
                     self.bus.warn(
                         f"有 {summary['unreadable']} 个 STRM 无法读取本地文件，"
                         "换源指纹不可用（不影响预热，建议检查「路径映射」）"
+                    )
+                if summary.get("migrated"):
+                    self.bus.ok(
+                        f"指纹规则已升级：{summary['migrated']} 条记录按新规则重建，"
+                        "等价写法（BOM/换行/编码差异）不再触发预热"
                     )
 
             # ---- 仅导出备份：给已有 MediaInfo 但还没有 json 的条目补备份
@@ -389,7 +431,7 @@ class Engine:
 
         targets: list[Target] = []
         complete_targets: list[Target] = []
-        total = complete = pending = unreadable = 0
+        total = complete = pending = unreadable = changed = migrated = 0
         seen = 0
 
         if since_ts is not None:
@@ -434,7 +476,14 @@ class Engine:
                     if prev is None:
                         self.store.set_fingerprint(item_id, path, fp)
                     elif prev.get("sha256") != fp.get("sha256"):
-                        reason = "changed"
+                        if prev.get("v") != FP_VERSION:
+                            # 旧版指纹按原始字节计算，升级后按新规则重建，
+                            # 不视为内容变化（否则升级首次扫描会把整库重新预热）
+                            self.store.set_fingerprint(item_id, path, fp)
+                            migrated += 1
+                        else:
+                            reason = "changed"
+                            changed += 1
             total += 1
 
             if reason:
@@ -463,6 +512,8 @@ class Engine:
             "complete": complete,
             "pending": pending,
             "unreadable": unreadable,
+            "changed": changed,
+            "migrated": migrated,
         }
 
     # ------------------------------------------------------------ 执行预热
@@ -582,10 +633,17 @@ class Engine:
                 if self._stop.is_set():
                     return "stopped", "已停止", "", {}
                 try:
-                    if target.reason == "changed":
+                    # 换源只在第一次尝试时刷新元数据；重试时刷新已无意义，
+                    # 而且一旦刷新接口报错不该把整个条目判失败（曾导致全部 400）
+                    if target.reason == "changed" and attempt == 0:
                         self.bus.info(f"检测到换源，先刷新元数据：{target.display}")
-                        client.refresh_item(target.item_id)
-                        self._sleep(2)
+                        try:
+                            client.refresh_item(target.item_id)
+                            self._sleep(2)
+                        except EmbyError as exc:
+                            self.bus.warn(
+                                f"刷新元数据失败（{exc}），跳过刷新直接预热：{target.display}"
+                            )
 
                     client.prewarm(user_id, target.item_id)
 

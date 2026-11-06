@@ -276,17 +276,25 @@ class EmbyClient:
         )
 
     def refresh_item(self, item_id: str) -> Any:
-        """STRM 换源后强制刷新元数据（不刷新图片，速度更快）。"""
-        return self.request(
-            f"/Items/{item_id}/Refresh",
-            {
-                "Recursive": "false",
-                "MetadataRefreshMode": "FullRefresh",
-                "ImageRefreshMode": "None",
-                "ReplaceAllMetadata": "false",
-            },
-            method="POST",
-        )
+        """STRM 换源后强制刷新元数据（不显式动图片）。
+
+        注意：Emby 4.x 的 ImageRefreshMode 枚举**没有** `None` 这个值，
+        传 "None" 会直接 HTTP 400（Requested value 'None' was not found.）。
+        这里只显式指定元数据刷新模式，图片走服务端默认策略；
+        万一某些版本连 FullRefresh 也不认，退回不带参数的最简调用。
+        """
+        try:
+            return self.request(
+                f"/Items/{item_id}/Refresh",
+                {"Recursive": "false", "MetadataRefreshMode": "FullRefresh"},
+                method="POST",
+            )
+        except EmbyError:
+            return self.request(
+                f"/Items/{item_id}/Refresh",
+                {"Recursive": "false"},
+                method="POST",
+            )
 
 
 # ------------------------------------------------------------------ 工具函数
