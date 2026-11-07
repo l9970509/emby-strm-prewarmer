@@ -84,6 +84,7 @@ let state = {
   logSeq: { prewarm: 0, sync: 0, strm: 0 },
   logClearedAt: { prewarm: 0, sync: 0, strm: 0 },
   logExpanded: { prewarm: false, sync: false, strm: false },
+  logAll: { prewarm: [], sync: [], strm: [] },
   busy: false,
   failuresFetched: -1,
   dailyTimes: [],
@@ -168,15 +169,45 @@ function fmtDuration(seconds) {
 
 /* ------------------------------------------------------------------ 日志 */
 // 预热与备份同步日志走两个独立通道，分别展示在各自页面
+const LOG_CAP = 6000;      // 完整模式下本次会话保留的最大行数
+const LOG_PREVIEW = 20;    // 收纳（简洁）模式下显示的最新行数
+// 从会话完整缓冲重建日志窗口：展开显示全部，收纳只留最新 20 条
+function renderLogBox(box, channel) {
+  const all = state.logAll[channel] || [];
+  const cap = state.logExpanded[channel] ? LOG_CAP : LOG_PREVIEW;
+  const view = all.slice(-cap);
+  box.innerHTML = '';
+  if (!view.length) {
+    box.innerHTML = '<div class="empty">等待任务…</div>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const line of view) {
+    const row = document.createElement('div');
+    row.className = `row ${line.level}`;
+    const ts = document.createElement('span');
+    ts.className = 'ts';
+    ts.textContent = line.ts ? line.ts.slice(11) : '';
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = line.msg;
+    row.append(ts, msg);
+    frag.appendChild(row);
+  }
+  box.appendChild(frag);
+}
 function appendLogs(box, lines, channel) {
   if (!lines || !lines.length) return;
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const all = state.logAll[channel];
   const frag = document.createDocumentFragment();
   for (const line of lines) {
     if (line.seq <= state.logClearedAt[channel]) {
       state.logSeq[channel] = Math.max(state.logSeq[channel], line.seq);
       continue;
     }
+    all.push(line);
+    if (all.length > LOG_CAP) all.shift();
     const row = document.createElement('div');
     row.className = `row ${line.level}`;
     const ts = document.createElement('span');
@@ -192,8 +223,8 @@ function appendLogs(box, lines, channel) {
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
   box.appendChild(frag);
-  // 简洁模式只保留最新 20 条；完整模式保留全部（更早的历史已落盘到每日文件，可在「归档」中查看）
-  const cap = state.logExpanded[channel] ? 6000 : 20;
+  // 收纳模式只保留最新 20 条；完整模式保留全部（更早的历史已落盘到每日文件，可在「归档」中查看）
+  const cap = state.logExpanded[channel] ? LOG_CAP : LOG_PREVIEW;
   while (box.childElementCount > cap) box.removeChild(box.firstChild);
   // 自动滚动：仅在「勾选了自动滚动」且「用户已停在底部」时跟随新日志；
   // 用户向上翻看时不打断，鼠标滚轮可在日志窗口内正常滚动，也不会把事件锁死导致整页滚不动。
@@ -542,14 +573,17 @@ el.btnStop.addEventListener('click', async () => {
 });
 $('#btnClearLog').addEventListener('click', () => {
   state.logClearedAt.prewarm = state.logSeq.prewarm;
+  state.logAll.prewarm = [];
   el.log.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
 });
 $('#btnClearSyncLog').addEventListener('click', () => {
   state.logClearedAt.sync = state.logSeq.sync;
+  state.logAll.sync = [];
   el.syncLog.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
 });
 $('#btnClearStrmLog').addEventListener('click', () => {
   state.logClearedAt.strm = state.logSeq.strm;
+  state.logAll.strm = [];
   el.strmLog.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
 });
 
@@ -560,10 +594,13 @@ function openLogModal(channel) {
   mask.dataset.channel = channel;
   $('#logModalTitle').textContent = CHANNEL_LABEL[channel] ? ` · ${CHANNEL_LABEL[channel]}` : '';
   mask.hidden = false;
+  requestAnimationFrame(() => mask.classList.add('show'));
   loadLogDates(channel);
 }
 function closeLogModal() {
-  $('#logModalMask').hidden = true;
+  const mask = $('#logModalMask');
+  mask.classList.remove('show');
+  setTimeout(() => { mask.hidden = true; }, 180);
 }
 async function loadLogDates(channel) {
   const sel = $('#logDateSel');
@@ -622,13 +659,9 @@ document.querySelectorAll('[data-togglelog]').forEach(btn => {
     state.logExpanded[channel] = expanded;
     box.classList.toggle('expanded', expanded);
     btn.textContent = expanded ? '收纳日志' : '完整日志';
-    if (expanded) {
-      box.scrollTop = box.scrollHeight;
-    } else {
-      // 收回到最新 20 条（保留 .empty 占位符，只裁剪 .row 行）
-      const rows = Array.from(box.children).filter(c => c.classList && c.classList.contains('row'));
-      while (rows.length > 20) rows.shift().remove();
-    }
+    // 切换时按当前模式重建内容：展开显示本次会话全部日志，收纳只留最新 20 条
+    renderLogBox(box, channel);
+    box.scrollTop = box.scrollHeight;
   });
 });
 $('#btnCloseLog').addEventListener('click', closeLogModal);
