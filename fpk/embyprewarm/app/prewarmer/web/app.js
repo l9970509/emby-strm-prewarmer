@@ -191,7 +191,8 @@ function appendLogs(box, lines, channel) {
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
   box.appendChild(frag);
-  while (box.childElementCount > 4000) box.removeChild(box.firstChild);
+  // 日志窗口只保留最新的 20 条，更早的已落盘到每日日志文件，可在「完整日志」中查看
+  while (box.childElementCount > 20) box.removeChild(box.firstChild);
   const auto = channel === 'sync' ? el.autoScrollSync : el.autoScroll;
   if (auto.checked || atBottom) box.scrollTop = box.scrollHeight;
 }
@@ -546,6 +547,70 @@ $('#btnClearSyncLog').addEventListener('click', () => {
 $('#btnClearStrmLog').addEventListener('click', () => {
   state.logClearedAt.strm = state.logSeq.strm;
   el.strmLog.innerHTML = '<div class="empty">日志已清空（仅清空显示）</div>';
+});
+
+/* ----------------------------------------------------- 完整日志查看 */
+const CHANNEL_LABEL = { prewarm: '预热', sync: '同步', strm: '生成' };
+function openLogModal(channel) {
+  const mask = $('#logModalMask');
+  mask.dataset.channel = channel;
+  $('#logModalTitle').textContent = CHANNEL_LABEL[channel] ? ` · ${CHANNEL_LABEL[channel]}` : '';
+  mask.hidden = false;
+  loadLogDates(channel);
+}
+function closeLogModal() {
+  $('#logModalMask').hidden = true;
+}
+async function loadLogDates(channel) {
+  const sel = $('#logDateSel');
+  sel.innerHTML = '<option value="">加载中…</option>';
+  $('#logViewer').innerHTML = '<div class="empty">正在读取…</div>';
+  try {
+    const data = await api('/api/logfiles');
+    const dates = (data.dates || []).map(d => d.date);
+    if (!dates.length) {
+      sel.innerHTML = '<option value="">（暂无日志文件）</option>';
+      $('#logViewer').innerHTML = '<div class="empty">还没有生成任何日志文件</div>';
+      $('#logViewerMeta').textContent = '';
+      return;
+    }
+    sel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+    $('#logFilterChannel').checked = true;
+    loadLogFile(channel, dates[0]);
+  } catch (e) {
+    sel.innerHTML = '<option value="">加载失败</option>';
+    toast('读取日志列表失败：' + e.message, true);
+  }
+}
+async function loadLogFile(channel, date) {
+  if (!date) return;
+  const filter = $('#logFilterChannel').checked ? channel : null;
+  const viewer = $('#logViewer');
+  viewer.innerHTML = '<div class="empty">正在读取…</div>';
+  try {
+    const q = `date=${encodeURIComponent(date)}${filter ? `&channel=${filter}` : ''}`;
+    const data = await api(`/api/logfile?${q}`);
+    const text = data.text || '';
+    $('#logViewerMeta').textContent = text ? `${text.split('\n').filter(Boolean).length} 行` : '空';
+    if (!text) {
+      viewer.innerHTML = '<div class="empty">该日没有可显示的日志</div>';
+      return;
+    }
+    viewer.textContent = text;
+  } catch (e) {
+    viewer.innerHTML = `<div class="empty">读取失败：${e.message}</div>`;
+  }
+}
+document.querySelectorAll('[data-viewlog]').forEach(btn => {
+  btn.addEventListener('click', () => openLogModal(btn.dataset.viewlog));
+});
+$('#btnCloseLog').addEventListener('click', closeLogModal);
+$('#logModalMask').addEventListener('click', (e) => { if (e.target.id === 'logModalMask') closeLogModal(); });
+$('#logDateSel').addEventListener('change', (e) => {
+  loadLogFile($('#logModalMask').dataset.channel, e.target.value);
+});
+$('#logFilterChannel').addEventListener('change', () => {
+  loadLogFile($('#logModalMask').dataset.channel, $('#logDateSel').value);
 });
 $('#btnRequeueAll').addEventListener('click', async () => {
   try {
@@ -1374,6 +1439,7 @@ function fillConfig(cfg) {
   $('#cfgRetryInterval').value = cfg.failure_loop.auto_retry_interval_seconds;
   $('#cfgMaxAttempts').value = cfg.failure_loop.max_attempts;
   $('#cfgPort').value = cfg.server.port;
+  $('#cfgLogRetention').value = cfg.log.retention_days;
   $('#cfgPassword').value = '';
   $('#cfgPassword').placeholder = cfg.server.password_set ? '已设置，留空则不修改' : '不设置则免密码';
   $('#cfgWebhook').value = cfg.notify.webhook_url || '';
@@ -1532,6 +1598,9 @@ function collectConfig() {
     notify: {
       webhook_url: $('#cfgWebhook').value.trim(),
       pushplus_token: $('#cfgPushplus').value.trim(),
+    },
+    log: {
+      retention_days: Number($('#cfgLogRetention').value) || 0,
     },
     sync: {
       enabled: $('#cfgSyncEnabled').checked,

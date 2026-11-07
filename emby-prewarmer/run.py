@@ -72,7 +72,13 @@ def build(
     if not config_path.exists():
         config.save(config.get())
     store = Store(data_home / "state.json")
-    bus = LogBus(log_home / "prewarmer.log", console=console)
+    bus = LogBus(log_home, console=console)
+    # 应用日志保留天数配置，并在启动时清理一次过期日志
+    try:
+        bus.retention_days = int(config.get().get("log", {}).get("retention_days", 7))
+    except (ValueError, TypeError):
+        bus.retention_days = 7
+    bus.cleanup_old()
     engine = Engine(config, store, bus)
     syncer = Syncer(config, store, bus)
     syncer.engine = engine  # 同步完成后由引擎推送通知（PushPlus / Webhook）

@@ -6,7 +6,7 @@ import collections
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,30 +29,45 @@ FP_VERSION = 2
 
 
 class LogBus:
-    """环形日志缓冲 + 落盘，供面板轮询增量拉取。
+    """环形日志缓冲 + 按天落盘，供面板轮询增量拉取与「完整日志」查看。
 
     支持三通道：prewarm（预热）/ sync（备份同步）/ strm（STRM 生成），面板分别展示。
+    落盘采用 ``logs/YYYY-MM-DD.log`` 每日一个文件，超过 ``retention_days`` 天自动清除。
     """
 
     PREWARM = "prewarm"
     SYNC = "sync"
     STRM = "strm"
+    # 内存里只保留最近若干条用于实时增量展示（前端再只显示最新的 20 条）；
+    # 完整历史在落盘的每日日志文件里。
+    MEM_MAXLEN = 4000
 
-    def __init__(self, path: Path, maxlen: int = 4000, max_bytes: int = 10 * 1024 * 1024, console: bool = False):
-        self.path = Path(path)
-        self.max_bytes = max_bytes
+    def __init__(self, log_dir: Path, retention_days: int = 7, console: bool = False):
+        self.log_dir = Path(log_dir)
+        self.retention_days = retention_days
         self.console = console
         self._lock = threading.Lock()
         self._seq = 0
-        self._lines: collections.deque[dict[str, Any]] = collections.deque(maxlen=maxlen)
+        self._last_cleanup = 0.0
+        self._lines: collections.deque[dict[str, Any]] = collections.deque(maxlen=LogBus.MEM_MAXLEN)
 
-    def _rotate_if_needed(self) -> None:
+    # ------------------------------------------------------- 落盘文件
+    def _today_path(self) -> Path:
+        return self.log_dir / (datetime.now().strftime("%Y-%m-%d") + ".log")
+
+    def _rotate_if_needed(self, path: Path) -> None:
         try:
-            if self.path.exists() and self.path.stat().st_size > self.max_bytes:
-                backup = self.path.with_suffix(self.path.suffix + ".1")
-                if backup.exists():
-                    backup.unlink()
-                self.path.rename(backup)
+            if path.exists() and path.stat().st_size > 20 * 1024 * 1024:
+                # 单日日志过大时做序号滚动，避免单个文件无限膨胀
+                idx = 1
+                while True:
+                    rotated = path.with_name(path.name + f".{idx}")
+                    if not rotated.exists():
+                        path.rename(rotated)
+                        break
+                    idx += 1
+                    if idx > 99:
+                        break
         except OSError:
             pass
 
@@ -64,12 +79,18 @@ class LogBus:
             if self.console:
                 print(f"{entry['ts']} {level.upper():5s} [{channel}] {message}", flush=True)
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                self._rotate_if_needed()
-                with self.path.open("a", encoding="utf-8") as handle:
+                self.log_dir.mkdir(parents=True, exist_ok=True)
+                path = self._today_path()
+                self._rotate_if_needed(path)
+                with path.open("a", encoding="utf-8") as handle:
                     handle.write(f"{entry['ts']} {level.upper():5s} [{channel}] {message}\n")
             except OSError:
                 pass
+            # 每小时最多清理一次过期日志，避免高频落盘时反复扫目录
+            now = time.time()
+            if now - self._last_cleanup > 3600:
+                self._last_cleanup = now
+                self.cleanup_old()
 
     def info(self, message: str, channel: str = PREWARM) -> None:
         self.emit("info", message, channel)
@@ -82,6 +103,108 @@ class LogBus:
 
     def error(self, message: str, channel: str = PREWARM) -> None:
         self.emit("error", message, channel)
+
+    # ------------------------------------------------------- 保留与清理
+    def cleanup_old(self, retention_days: int | None = None) -> int:
+        """删除超过保留天数的每日日志文件。retention_days=0 表示永久保留。
+
+        返回本次删除的文件数量。
+        """
+        retention = retention_days if retention_days is not None else self.retention_days
+        if not retention:
+            return 0
+        if not self.log_dir.exists():
+            return 0
+        cutoff = datetime.now().date() - timedelta(days=retention)
+        removed = 0
+        try:
+            for path in self.log_dir.iterdir():
+                if not path.is_file():
+                    continue
+                name = path.name
+                if not (len(name) >= 10 and name[4] == "-" and name[7] == "-" and name.endswith(".log")):
+                    continue
+                try:
+                    file_date = datetime.strptime(name[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if file_date < cutoff:
+                    path.unlink()
+                    removed += 1
+        except OSError:
+            pass
+        return removed
+
+    def dates(self) -> list[dict[str, Any]]:
+        """可用的日志日期列表（新→旧），含文件大小（字节）。"""
+        if not self.log_dir.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        try:
+            for path in self.log_dir.iterdir():
+                if not path.is_file() or not path.name.endswith(".log"):
+                    continue
+                if len(path.name) < 10 or path.name[4] != "-" or path.name[7] != "-":
+                    continue
+                try:
+                    datetime.strptime(path.name[:10], "%Y-%m-%d")
+                except ValueError:
+                    continue
+                out.append(
+                    {
+                        "date": path.name[:10],
+                        "size": path.stat().st_size,
+                        # 同一天的多段滚动文件用一个 date 表示，size 取最大段
+                        "name": path.name,
+                    }
+                )
+        except OSError:
+            pass
+        # 按日期聚合（同一天可能有 .1/.2 滚动段），size 求和
+        merged: dict[str, int] = {}
+        for item in out:
+            merged[item["date"]] = merged.get(item["date"], 0) + item["size"]
+        return [
+            {"date": d, "size": merged[d]}
+            for d in sorted(merged.keys(), reverse=True)
+        ]
+
+    def read_date(self, date: str, channel: str | None = None) -> str:
+        """读取某一天的日志文本；channel 非空时只保留该通道的行。
+
+        同一天若有滚动段（.1/.2）一并拼接。
+        """
+        if not self.log_dir.exists():
+            return ""
+        text_parts: list[str] = []
+        try:
+            base = self.log_dir / f"{date}.log"
+            candidates = [base]
+            idx = 1
+            while True:
+                rotated = self.log_dir / f"{date}.log.{idx}"
+                if rotated.exists():
+                    candidates.append(rotated)
+                    idx += 1
+                else:
+                    break
+            for path in candidates:
+                try:
+                    text_parts.append(path.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        if channel is None:
+            return "".join(text_parts)
+        needed = f"[{channel}]"
+        lines = [
+            line
+            for chunk in text_parts
+            for line in chunk.splitlines()
+            if needed in line
+        ]
+        return "\n".join(lines)
 
     @staticmethod
     def _channel_of(entry: dict[str, Any]) -> str:

@@ -156,6 +156,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # PushPlus（pushplus.plus）推送 Token，留空不启用
         "pushplus_token": "",
     },
+    "log": {
+        # 日志文件保留天数：落盘的每日日志超过该天数自动清除（0 表示永久保留）
+        "retention_days": 7,
+    },
 }
 
 # 数值范围约束，避免面板里填出离谱的值把机器拖死
@@ -175,6 +179,7 @@ CLAMPS: dict[str, tuple[float, float]] = {
     "failure_loop.max_attempts": (0, 100),
     "server.port": (1, 65535),
     "strm.max_file_mb": (0, 4096),
+    "log.retention_days": (0, 365),
 }
 
 

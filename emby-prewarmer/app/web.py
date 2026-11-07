@@ -247,6 +247,14 @@ class Handler(BaseHTTPRequestHandler):
                 if is_masked_secret(strm.get("openlist_password")):
                     strm["openlist_password"] = current["strm"].get("openlist_password", "")
             saved = self.ctx.config.save(incoming)
+            # 日志保留天数变更即时生效
+            try:
+                self.ctx.bus.retention_days = int(saved.get("log", {}).get("retention_days", 7))
+                removed = self.ctx.bus.cleanup_old()
+                if removed:
+                    self.ctx.bus.info(f"已按保留天数清理过期日志 {removed} 个文件", LogBus.PREWARM)
+            except (ValueError, TypeError):
+                pass
             self.ctx.bus.info("配置已更新")
             self._json({"ok": True, "config": self.ctx.config.public(), "saved": saved})
         elif path == "/api/strm/tasks":
@@ -383,6 +391,22 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 lines = self.ctx.bus.tail(300, channel)
             self._json({"lines": lines, "seq": self.ctx.bus.seq})
+        elif path == "/api/logfiles":
+            # 可用的每日日志文件列表（新→旧）
+            dates = self.ctx.bus.dates()
+            retention = 0
+            try:
+                retention = int(self.ctx.config.get().get("log", {}).get("retention_days", 0))
+            except (ValueError, TypeError):
+                pass
+            self._json({"dates": dates, "retention_days": retention})
+        elif path == "/api/logfile":
+            date = (query.get("date") or [""])[0].strip()
+            channel = (query.get("channel") or [""])[0].strip() or None
+            if not date:
+                self._json({"error": "缺少 date 参数"}, 400)
+                return
+            self._json({"date": date, "channel": channel, "text": self.ctx.bus.read_date(date, channel)})
         elif path == "/api/config":
             self._json({"config": self.ctx.config.public()})
         elif path == "/api/failures":

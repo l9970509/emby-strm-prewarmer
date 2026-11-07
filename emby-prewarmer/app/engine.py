@@ -266,7 +266,7 @@ class Engine:
                     return
             else:
                 self._set(phase="扫描媒体库")
-                self.bus.info("正在读取媒体库条目…")
+                self.bus.info("正在检查媒体库条目…")
                 targets, complete_targets, summary = self._collect(client, cfg)
                 collect_summary = summary
                 self.store.set_summary({**summary, "ts": time.time()})
@@ -453,8 +453,7 @@ class Engine:
 
             seen += 1
             if seen % 500 == 0:
-                self._set(phase=f"扫描媒体库（{seen}）")
-                self.bus.info(f"已检查 {seen} 个 STRM 条目…")
+                self._set(phase="扫描媒体库")
 
             done = has_complete_video(item)
             fp = fingerprint_of(path, mappings)
