@@ -83,6 +83,7 @@ let state = {
   cfg: null,
   logSeq: { prewarm: 0, sync: 0, strm: 0 },
   logClearedAt: { prewarm: 0, sync: 0, strm: 0 },
+  logExpanded: { prewarm: false, sync: false, strm: false },
   busy: false,
   failuresFetched: -1,
   dailyTimes: [],
@@ -191,10 +192,13 @@ function appendLogs(box, lines, channel) {
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
   box.appendChild(frag);
-  // 日志窗口只保留最新的 20 条，更早的已落盘到每日日志文件，可在「完整日志」中查看
-  while (box.childElementCount > 20) box.removeChild(box.firstChild);
-  const auto = channel === 'sync' ? el.autoScrollSync : el.autoScroll;
-  if (auto.checked || atBottom) box.scrollTop = box.scrollHeight;
+  // 简洁模式只保留最新 20 条；完整模式保留全部（更早的历史已落盘到每日文件，可在「归档」中查看）
+  const cap = state.logExpanded[channel] ? 6000 : 20;
+  while (box.childElementCount > cap) box.removeChild(box.firstChild);
+  // 自动滚动：仅在「勾选了自动滚动」且「用户已停在底部」时跟随新日志；
+  // 用户向上翻看时不打断，鼠标滚轮可在日志窗口内正常滚动，也不会把事件锁死导致整页滚不动。
+  const autoBox = { prewarm: el.autoScroll, sync: el.autoScrollSync, strm: el.autoScrollStrm }[channel];
+  if (autoBox && autoBox.checked && atBottom) box.scrollTop = box.scrollHeight;
 }
 
 async function pollLogs() {
@@ -603,6 +607,29 @@ async function loadLogFile(channel, date) {
 }
 document.querySelectorAll('[data-viewlog]').forEach(btn => {
   btn.addEventListener('click', () => openLogModal(btn.dataset.viewlog));
+});
+
+/* ----------------------------------------------------- 完整/收纳 切换 */
+// 点击「完整日志」把日志窗口展开为可滚动的全量视图（保留本次会话全部输出），
+// 按钮变为「收纳日志」；再次点击收回到简洁的「最新 20 条」视图。
+const TOGGLE_BOX = { prewarm: el.log, sync: el.syncLog, strm: el.strmLog };
+document.querySelectorAll('[data-togglelog]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const channel = btn.dataset.togglelog;
+    const box = TOGGLE_BOX[channel];
+    if (!box) return;
+    const expanded = !state.logExpanded[channel];
+    state.logExpanded[channel] = expanded;
+    box.classList.toggle('expanded', expanded);
+    btn.textContent = expanded ? '收纳日志' : '完整日志';
+    if (expanded) {
+      box.scrollTop = box.scrollHeight;
+    } else {
+      // 收回到最新 20 条（保留 .empty 占位符，只裁剪 .row 行）
+      const rows = Array.from(box.children).filter(c => c.classList && c.classList.contains('row'));
+      while (rows.length > 20) rows.shift().remove();
+    }
+  });
 });
 $('#btnCloseLog').addEventListener('click', closeLogModal);
 $('#logModalMask').addEventListener('click', (e) => { if (e.target.id === 'logModalMask') closeLogModal(); });

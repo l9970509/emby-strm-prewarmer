@@ -305,7 +305,6 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
   min-height: 0;
   max-height: 340px;
   overflow-y: auto;
-  overscroll-behavior: contain;
   background: #101722;
   border-radius: var(--radius-sm);
   padding: 12px 14px;
@@ -314,6 +313,11 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
   color: #c8d2e2;
   scrollbar-width: thin;
   scrollbar-color: #39414f transparent;
+}
+/* 完整模式：展开成可滚动的全量视图，鼠标滚轮可顺畅翻看全部会话日志 */
+.log.expanded {
+  height: min(60vh, 540px);
+  max-height: min(60vh, 540px);
 }
 .log::-webkit-scrollbar { width: 8px; }
 .log::-webkit-scrollbar-thumb { background: #39414f; border-radius: 4px; }
@@ -683,6 +687,7 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
   .setting-text { display: none; }
   .nav-tab { padding: 0 16px; }
   .log, #syncLog, #strmLog { height: 260px; max-height: 260px; }
+  .log.expanded, #syncLog.expanded, #strmLog.expanded { height: min(60vh, 540px); max-height: min(60vh, 540px); }
 }
 
 

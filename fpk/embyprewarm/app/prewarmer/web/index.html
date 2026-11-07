@@ -108,7 +108,8 @@
             <h3>预热日志</h3>
             <div class="live-tools">
               <label class="chk"><input type="checkbox" id="autoScroll" checked><span>自动滚动</span></label>
-              <button class="link" data-viewlog="prewarm">完整日志</button>
+              <button class="link" data-togglelog="prewarm">完整日志</button>
+              <button class="link" data-viewlog="prewarm">归档</button>
               <button class="link" id="btnClearLog">清空显示</button>
             </div>
           </div>
@@ -292,7 +293,8 @@
             <h3>生成日志</h3>
             <div class="live-tools">
               <label class="chk"><input type="checkbox" id="autoScrollStrm" checked><span>自动滚动</span></label>
-              <button class="link" data-viewlog="strm">完整日志</button>
+              <button class="link" data-togglelog="strm">完整日志</button>
+              <button class="link" data-viewlog="strm">归档</button>
               <button class="link" id="btnClearStrmLog">清空显示</button>
             </div>
           </div>
@@ -437,7 +439,8 @@
             <h3>同步日志</h3>
             <div class="live-tools">
               <label class="chk"><input type="checkbox" id="autoScrollSync" checked><span>自动滚动</span></label>
-              <button class="link" data-viewlog="sync">完整日志</button>
+              <button class="link" data-togglelog="sync">完整日志</button>
+              <button class="link" data-viewlog="sync">归档</button>
               <button class="link" id="btnClearSyncLog">清空显示</button>
             </div>
           </div>
@@ -753,7 +756,7 @@
 <div class="modal-mask" id="logModalMask" hidden>
   <div class="modal modal-log">
     <div class="modal-head">
-      <h3>完整日志<span id="logModalTitle"></span></h3>
+      <h3>归档日志<span id="logModalTitle"></span></h3>
       <button class="icon-btn" id="btnCloseLog" aria-label="关闭">✕</button>
     </div>
     <div class="modal-body log-viewer-bar">
