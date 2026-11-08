@@ -475,7 +475,11 @@ class Handler(BaseHTTPRequestHandler):
             self.ctx.bus.info(f"📩 忽略 Emby 通知事件：{event or '(空)'}")
             self._json({"ok": True, "ignored": event or "empty"})
             return
-        if item_type and item_type not in ("Movie", "Episode", "Video", "MusicVideo"):
+        # Series/Season 是电视剧新增时的入库通知类型（Emby 对剧集库变更发 Series，
+        # 对新增季发 Season），它们不带单集路径但代表"剧集库有变化"，应触发预热扫描；
+        # 扫描本身幂等，已预热的会自动跳过。明确排除 Person/Studio/Genre 等非媒体库。
+        MEDIA_TYPES = ("Movie", "Episode", "Video", "MusicVideo", "Series", "Season")
+        if item_type and item_type not in MEDIA_TYPES:
             self.ctx.bus.info(f"📩 忽略非媒体条目通知：{item_type} {name}")
             self._json({"ok": True, "ignored": item_type})
             return

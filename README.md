@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.9.fpk    # 当前版本安装包
+└── embyprewarm-1.9.10.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.9](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.10](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.9.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.10.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.9.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.10.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
