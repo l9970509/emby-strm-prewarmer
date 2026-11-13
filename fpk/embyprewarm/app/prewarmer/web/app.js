@@ -738,13 +738,20 @@ function openSyncModal() {
       return;
     }
     if (plan.empty) {
-      $('#syncPlanSummary').textContent = '两边内容一致，没有需要同步的文件';
+      const exN = (plan.excluded_rules || []).length;
+      $('#syncPlanSummary').textContent = exN
+        ? `没有需要同步的文件（已排除 ${plan.excluded || 0} 个文件，${exN} 条排除规则）`
+        : '两边内容一致，没有需要同步的文件';
       $('#syncPlanList').innerHTML = '<div class="empty">没有需要同步的文件</div>';
       return;
     }
     const miss = plan.missing_sources ? `（${plan.missing_sources} 个来源目录不可读）` : '';
+    const exRules = (plan.excluded_rules || []).length;
+    const exText = exRules
+      ? `，已排除 ${plan.excluded || 0} 个文件（${exRules} 条排除规则）`
+      : '';
     $('#syncPlanSummary').innerHTML =
-      `将 <b class="plan-copy">复制 ${plan.copied}</b> 个文件，跳过已存在的 ${plan.skipped} 个${miss}` +
+      `将 <b class="plan-copy">复制 ${plan.copied}</b> 个文件，跳过已存在的 ${plan.skipped} 个${miss}${exText}` +
       (plan.truncated ? '，明细仅显示前 1000 条' : '');
     renderPlanList();
   }).catch((e) => {
@@ -829,6 +836,7 @@ function normalizeStrmTask(t) {
     remote,
     local: String((t && t.local) || '').trim().replace(/\/+$/, ''),
     enabled: !(t && t.enabled === false),
+    no_sync: !!(t && t.no_sync),
     mode: t && t.mode === 'full' ? 'full' : 'incremental',
     rebuild: !!(t && t.rebuild),
     schedule_enabled: !!(t && t.schedule_enabled),
@@ -901,6 +909,7 @@ function renderStrmTasks() {
       chips.push('<span class="pill pill-off">未定时</span>');
     }
     if (t.rebuild) chips.push('<span class="pill pill-warn">清理残留</span>');
+    if (t.no_sync) chips.push('<span class="pill pill-warn" title="此任务输出目录不参与备份同步">不同步</span>');
     if (!t.enabled) chips.push('<span class="pill pill-off">已停用</span>');
     const next = nextMap[t.id] ? `下次 ${nextMap[t.id]}` : '';
     return `<article class="strm-task-card${t.enabled ? '' : ' is-off'}" data-task="${escapeHtml(t.id)}">
@@ -984,6 +993,7 @@ function openTaskModal(taskId) {
   $('#taskLocal').value = task ? task.local : '';
   $('#taskEnabled').checked = task ? !!task.enabled : true;
   $('#taskRebuild').checked = task ? !!task.rebuild : false;
+  $('#taskNoSync').checked = task ? !!task.no_sync : false;
   $('#taskSched').checked = task ? !!task.schedule_enabled : false;
   state.taskTimes = task ? (task.schedule_times || []).slice() : [];
   setSeg('taskMode', task ? task.mode : 'incremental');
@@ -1055,6 +1065,7 @@ async function saveTaskModal() {
     remote: normalizedRemote,
     local,
     enabled: $('#taskEnabled').checked,
+    no_sync: $('#taskNoSync').checked,
     mode: segValue('taskMode'),
     rebuild: $('#taskRebuild').checked,
     schedule_enabled: schedOn,
@@ -1513,6 +1524,7 @@ function fillConfig(cfg) {
   $('#cfgSyncEnabled').checked = !!(cfg.sync && cfg.sync.enabled);
   $('#cfgSyncSource').value = ((cfg.sync && cfg.sync.source) || []).join('\n');
   $('#cfgSyncTarget').value = (cfg.sync && cfg.sync.target) || '';
+  $('#cfgSyncExclude').value = ((cfg.sync && cfg.sync.exclude) || []).join('\n');
   $('#cfgSyncImages').checked = !!(cfg.sync && cfg.sync.images);
   $('#cfgSyncSubs').checked = !!(cfg.sync && cfg.sync.subtitles);
   $('#cfgSyncAfter').checked = !!(cfg.sync && cfg.sync.after_prewarm);
@@ -1666,6 +1678,7 @@ function collectConfig() {
       enabled: $('#cfgSyncEnabled').checked,
       source: $('#cfgSyncSource').value.split('\n').map((s) => s.trim()).filter(Boolean),
       target: $('#cfgSyncTarget').value.trim(),
+      exclude: $('#cfgSyncExclude').value.split('\n').map((s) => s.trim()).filter(Boolean),
       images: $('#cfgSyncImages').checked,
       subtitles: $('#cfgSyncSubs').checked,
       after_prewarm: $('#cfgSyncAfter').checked,

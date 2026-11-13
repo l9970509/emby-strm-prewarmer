@@ -116,6 +116,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # 来源目录 A（本地路径，每行一个）；留空自动使用媒体库映射后的本机路径
         "source": [],
         "target": "",                # 目标目录 B
+        # 排除的文件夹路径（每行一个）：可填相对来源 A 的路径、绝对路径或文件夹名
+        "exclude": [],
         "images": True,              # 一起同步图片（海报/fanart 等）
         "subtitles": True,           # 一起同步字幕
         "after_prewarm": True,       # 预热任务结束后自动同步
@@ -332,6 +334,21 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
     sync_cfg["source"] = [
         normalize_root(str(s)) for s in (sync_cfg.get("source") or []) if str(s).strip()
     ]
+    # 排除路径：兼容「每行/逗号分隔的字符串」与「数组」两种写法。
+    # 注意 _coerce 已按默认值(list)把字符串按换行拆过，所以这里再按逗号拆每项。
+    raw_exclude = sync_cfg.get("exclude") or []
+    if isinstance(raw_exclude, str):
+        raw_exclude = [raw_exclude]
+    seen_ex: set[str] = set()
+    excludes: list[str] = []
+    if isinstance(raw_exclude, (list, tuple)):
+        for item in raw_exclude:
+            for piece in str(item or "").replace("，", ",").split(","):
+                text = piece.strip().replace("\\", "/").rstrip("/")
+                if text and text not in seen_ex:
+                    seen_ex.add(text)
+                    excludes.append(text)
+    sync_cfg["exclude"] = excludes
     raw_time = str(sync_cfg.get("schedule_time") or "04:30").strip().replace("：", ":")
     parts = raw_time.split(":")
     try:
@@ -413,6 +430,8 @@ def sanitize(user_cfg: dict[str, Any]) -> dict[str, Any]:
                     # 上次使用的本地根目录：换了目录后用来把已生成的 strm 自动搬过去
                     "prev_local": str(raw.get("prev_local") or "").strip(),
                     "enabled": _coerce(True, raw.get("enabled", True)),
+                    # 此任务不同步：其输出目录自动加入备份同步排除列表
+                    "no_sync": _coerce(False, raw.get("no_sync", False)),
                     "mode": "full" if str(raw.get("mode") or "").strip().lower() == "full" else "incremental",
                     "rebuild": _coerce(True, raw["rebuild"]) if "rebuild" in raw else legacy_rebuild,
                     "schedule_enabled": sched_on,

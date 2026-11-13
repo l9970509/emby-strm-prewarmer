@@ -23,7 +23,7 @@
 | 入库通知唤醒 | 接收 Emby Webhooks 的 `library.new`，秒级响应 |
 | 失败循环预热 | 单项重试 + 运行内多轮 + 后台指数退避持续重试 + 手动预热 |
 | 媒体信息备份 | 自动导出 mediainfo.json，另有全库补导出模式 |
-| 备份同步 | 同步到备份目录 B，B 已存在跳过、不存在复制；手动/预热后/定时触发 |
+| 备份同步 | 同步到备份目录 B，B 已存在跳过、不存在复制；手动/预热后/定时触发；支持按目录排除（同步设置里填排除路径，或在 STRM 任务里勾选「此任务不同步」） |
 | Web 面板 | 四页面（预热 / STRM 生成 / 备份同步 / 任务记录）、日志窗口固定显示最新 20 条、完整日志按天归档可点开查看、失败队列、在线改配置 |
 | 消息通知 | PushPlus（微信）与通用 Webhook，附发送测试按钮 |
 
@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.10.fpk    # 当前版本安装包
+└── embyprewarm-1.9.11.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.10](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.11](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.10.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.11.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.10.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.11.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。

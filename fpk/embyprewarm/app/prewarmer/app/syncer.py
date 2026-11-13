@@ -32,6 +32,59 @@ PLAN_ITEM_LIMIT = 1000
 NOTIFY_DETAIL_LIMIT = 80
 
 
+def _path_text(value: str) -> str:
+    """把路径统一成 /a/b/c/ 形式，便于按「连续路径段」判断是否落在排除目录内。"""
+    return "/" + str(value or "").replace("\\", "/").strip("/") + "/"
+
+
+def _excluded_rules(cfg: dict[str, Any]) -> list[str]:
+    """汇总排除规则：同步设置里手填的路径 + 标记「此任务不同步」的任务输出目录。
+
+    任务输出目录 = 本地根目录 + 网盘完整路径（镜像结构），同时加入「完整输出目录」
+    与「网盘路径」两种写法：前者匹配绝对路径，后者匹配相对来源 A 的路径，
+    这样即使来源 A 与任务本地根不是同一个挂载点也能正确排除。
+    """
+    rules: list[str] = []
+    for raw in (cfg["sync"].get("exclude") or []):
+        text = str(raw or "").strip().replace("\\", "/").strip("/")
+        if text:
+            rules.append(text)
+    for task in ((cfg.get("strm") or {}).get("tasks") or []):
+        if not isinstance(task, dict) or not task.get("no_sync"):
+            continue
+        remote = str(task.get("remote") or "").strip().replace("\\", "/").strip("/")
+        local = str(task.get("local") or "").strip().replace("\\", "/").strip("/")
+        if remote:
+            rules.append(remote)
+        if local and remote:
+            rules.append(f"{local}/{remote}")
+    seen: set[str] = set()
+    unique: list[str] = []
+    for rule in rules:
+        if rule not in seen:
+            seen.add(rule)
+            unique.append(rule)
+    return unique
+
+
+def _is_excluded(abs_path: str, rel_path: str, rules: list[str]) -> bool:
+    """文件的绝对路径或相对来源 A 的路径，任一包含排除目录这段路径即跳过。
+
+    支持三种写法：相对来源 A 的子路径、绝对路径、以及单独一个文件夹名。
+    """
+    if not rules:
+        return False
+    abs_text = _path_text(abs_path)
+    rel_text = _path_text(rel_path)
+    for rule in rules:
+        needle = _path_text(rule)
+        if needle == "//":
+            continue
+        if needle in abs_text or needle in rel_text:
+            return True
+    return False
+
+
 class Syncer:
     """增量同步器：线程安全，同一时间只允许一个同步任务。"""
 
@@ -59,8 +112,9 @@ class Syncer:
             return {"ok": False, "error": "未配置来源目录 A，且媒体库本机路径不可用"}
 
         target_path = Path(target)
+        rules = _excluded_rules(cfg)
         items: list[dict[str, Any]] = []
-        copied = skipped = missing = 0
+        copied = skipped = missing = excluded = 0
         for source in sources:
             root = Path(source)
             if not root.is_dir():
@@ -71,6 +125,9 @@ class Syncer:
                     if not path.is_file() or not self._wanted(cfg, path):
                         continue
                     rel = path.relative_to(root).as_posix()
+                    if _is_excluded(path.as_posix(), rel, rules):
+                        excluded += 1
+                        continue
                     action = "skip" if (target_path / rel).exists() else "copy"
                     if action == "copy":
                         copied += 1
@@ -90,7 +147,8 @@ class Syncer:
             return {
                 "ok": True, "empty": True,
                 "sources": sources, "target": target,
-                "copied": 0, "skipped": 0, "items": [],
+                "copied": 0, "skipped": 0, "excluded": excluded,
+                "excluded_rules": rules, "items": [],
                 "note": "来源目录里没有可同步的文件（或已全部同步）",
             }
         return {
@@ -100,6 +158,8 @@ class Syncer:
             "target": target,
             "copied": copied,
             "skipped": skipped,
+            "excluded": excluded,
+            "excluded_rules": rules,
             "missing_sources": missing,
             "items": items,
             "truncated": (copied + skipped) > len(items),
@@ -168,13 +228,20 @@ class Syncer:
         except OSError as exc:
             return self._finish(started, reason, ok=False, error=f"目标目录不可用：{exc}")
 
-        copied = skipped = failed = 0
+        copied = skipped = failed = excluded = 0
         details: list[dict[str, str]] = []
         errors: list[str] = []
+        rules = _excluded_rules(cfg)
         self.bus.info(
             f"🔄 开始备份同步（{reason}）：A={sources[0]}{' 等' if len(sources) > 1 else ''} → B={target}",
             LogBus.SYNC,
         )
+        if rules:
+            self.bus.info(
+                f"🚫 已排除 {len(rules)} 个目录：{'、'.join(rules[:5])}"
+                f"{' 等' if len(rules) > 5 else ''}",
+                LogBus.SYNC,
+            )
 
         for source in sources:
             root = Path(source)
@@ -188,6 +255,9 @@ class Syncer:
                     if not path.is_file() or not self._wanted(cfg, path):
                         continue
                     rel = path.relative_to(root).as_posix()
+                    if _is_excluded(path.as_posix(), rel, rules):
+                        excluded += 1
+                        continue
                     dst = target_path / rel
                     if dst.exists():
                         skipped += 1
@@ -203,7 +273,7 @@ class Syncer:
                         errors.append(f"{path}: {exc}")
                     self.bus.warn(f"同步失败：{path}: {exc}", LogBus.SYNC)
 
-        note = f"复制 {copied} / 跳过 {skipped} / 失败 {failed}"
+        note = f"复制 {copied} / 跳过 {skipped} / 排除 {excluded} / 失败 {failed}"
         level_ok = failed == 0
         if level_ok:
             self.bus.ok(f"✅ 备份同步完成（{reason}）：{note}", LogBus.SYNC)
@@ -211,7 +281,7 @@ class Syncer:
             self.bus.warn(f"⚠️ 备份同步完成（{reason}）：{note}", LogBus.SYNC)
         result = self._finish(
             started, reason, ok=level_ok,
-            copied=copied, skipped=skipped, failed=failed, note=note,
+            copied=copied, skipped=skipped, excluded=excluded, failed=failed, note=note,
             details=details[:NOTIFY_DETAIL_LIMIT],
         )
         # 与预热通知一致：只推送有实际变动的任务（复制数 > 0，门槛在 notify_sync 内）

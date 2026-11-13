@@ -496,6 +496,12 @@
             <label class="field switch-field"><span>每天定时同步</span><label class="switch"><input type="checkbox" id="cfgSyncSched"><i></i></label></label>
           </div>
           <label class="field half"><span>定时同步时刻</span><input type="time" id="cfgSyncTime"></label>
+          <label class="field">
+            <span>排除的文件夹路径（每行一个，留空不排除）</span>
+            <textarea id="cfgSyncExclude" rows="3" placeholder="联通云盘9705/影视库/电影&#10;/vol2/1000/影视库/0strm/strm/临时&#10;预告片"></textarea>
+            <em>可填相对来源 A 的路径、完整路径，或单个文件夹名；命中路径中任意一段即排除。
+              在 STRM 生成任务里勾选「此任务不同步」也会自动把该任务的输出目录加进来。</em>
+          </label>
           <em class="note">
             把 A 目录内 <code>*-mediainfo.json</code>（可选图片、字幕）按相同目录结构同步到 B：
             B 已存在的文件跳过，不存在的复制。手动同步会先展示明细，确认后才执行。
@@ -621,6 +627,7 @@
       <div class="grid2">
         <label class="field switch-field"><span>启用此任务</span><label class="switch"><input type="checkbox" id="taskEnabled" checked><i></i></label></label>
         <label class="field switch-field"><span>清理网盘已删除的 strm</span><label class="switch"><input type="checkbox" id="taskRebuild"><i></i></label></label>
+        <label class="field switch-field" title="开启后，这个任务输出目录里的 mediainfo.json、图片、字幕都不参与「备份同步」"><span>此任务不同步（跳过备份同步）</span><label class="switch"><input type="checkbox" id="taskNoSync"><i></i></label></label>
       </div>
       <div class="field">
         <span>默认生成模式</span>
