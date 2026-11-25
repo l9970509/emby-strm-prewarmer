@@ -23,6 +23,17 @@
   --radius-sm: 14px;
   --shadow: 0 1px 2px rgba(16, 24, 32, .03), 0 10px 30px rgba(16, 24, 32, .05);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* 日志窗口：浅色模式用浅底深字，深色模式在下方媒体查询里覆盖回深色终端风格 */
+  --log-bg: #f5f7f9;
+  --log-border: #e4e9ed;
+  --log-text: #3d444c;
+  --log-ts: #8a939e;
+  --log-ok: #0a8f52;
+  --log-warn: #b26a00;
+  --log-error: #d32f3f;
+  --log-info: #3d444c;
+  --log-empty: #8a939e;
+  --log-scroll: #c9d1d8;
 }
 
 * { box-sizing: border-box; }
@@ -305,14 +316,15 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
   min-height: 0;
   max-height: 340px;
   overflow-y: auto;
-  background: #101722;
+  background: var(--log-bg);
+  border: 1px solid var(--log-border);
   border-radius: var(--radius-sm);
   padding: 12px 14px;
   font-family: var(--mono);
   font-size: 12px; line-height: 1.72;
-  color: #c8d2e2;
+  color: var(--log-text);
   scrollbar-width: thin;
-  scrollbar-color: #39414f transparent;
+  scrollbar-color: var(--log-scroll) transparent;
 }
 /* 完整模式：展开成可滚动的全量视图，鼠标滚轮可顺畅翻看全部会话日志 */
 .log.expanded {
@@ -320,15 +332,15 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
   max-height: min(60vh, 540px);
 }
 .log::-webkit-scrollbar { width: 8px; }
-.log::-webkit-scrollbar-thumb { background: #39414f; border-radius: 4px; }
+.log::-webkit-scrollbar-thumb { background: var(--log-scroll); border-radius: 4px; }
 .log .row { display: flex; gap: 8px; }
-.log .ts { color: #5b6678; flex: 0 0 auto; }
+.log .ts { color: var(--log-ts); flex: 0 0 auto; }
 .log .msg { word-break: break-all; white-space: pre-wrap; }
-.log .row.ok .msg { color: #6ee7a0; }
-.log .row.warn .msg { color: #f5c46b; }
-.log .row.error .msg { color: #ff8fa3; }
-.log .row.info .msg { color: #c8d2e2; }
-.log .empty { color: #5b6678; }
+.log .row.ok .msg { color: var(--log-ok); }
+.log .row.warn .msg { color: var(--log-warn); }
+.log .row.error .msg { color: var(--log-error); }
+.log .row.info .msg { color: var(--log-info); }
+.log .empty { color: var(--log-empty); }
 
 /* 三个页面的日志窗口同尺寸，切换页面时不跳动 */
 #syncLog, #strmLog { height: 340px; max-height: 340px; min-height: 0; flex: none; }
@@ -819,6 +831,17 @@ code { font-family: var(--mono); font-size: .92em; background: var(--surface-2);
     --warn-soft: #2b2214;
     --danger-soft: #2c1620;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .25);
+    /* 深色模式下日志窗口维持原有的深色终端风格 */
+    --log-bg: #101722;
+    --log-border: transparent;
+    --log-text: #c8d2e2;
+    --log-ts: #5b6678;
+    --log-ok: #6ee7a0;
+    --log-warn: #f5c46b;
+    --log-error: #ff8fa3;
+    --log-info: #c8d2e2;
+    --log-empty: #5b6678;
+    --log-scroll: #39414f;
   }
   .topbar { background: rgba(16, 20, 24, .85); }
   .nav-tabs { background: rgba(255, 255, 255, .07); }
