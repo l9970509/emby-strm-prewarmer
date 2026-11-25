@@ -30,6 +30,9 @@ from .state import LogBus, Store
 
 # 预览/通知明细上限（超出只给统计）
 PLAN_ITEM_LIMIT = 1000
+# 「需执行」明细优先保留：大库里前 1000 条往往全是 skip，
+# 按遍历顺序截断会把后面的新增/更新/删除全挤掉，看起来就是「没有明细」。
+PLAN_CHANGED_LIMIT = 1000
 NOTIFY_DETAIL_LIMIT = 80
 # 每个任务的详细日志上限（按任务独立计算，避免前面的任务把额度用光）。
 # 手动点击时明细给足，定时任务收紧一些，防止几万条刷屏。
@@ -258,7 +261,8 @@ class StrmGenerator:
             "extra_skip": 0,
             "migrate": 0,
         }
-        items: list[dict[str, Any]] = []
+        changed_items: list[dict[str, Any]] = []
+        skipped_items: list[dict[str, Any]] = []
         errors: list[str] = []
         groups: list[dict[str, Any]] = []
         for task in selected:
@@ -269,11 +273,16 @@ class StrmGenerator:
             for key in total:
                 total[key] += built["counts"].get(key, 0)
             for item in built["items"]:
-                if len(items) < PLAN_ITEM_LIMIT:
-                    item["task"] = task.get("name") or task.get("remote")
-                    item["task_id"] = task.get("id")
-                    item["mode"] = task_mode
-                    items.append(item)
+                decorated = dict(item)
+                decorated["task"] = task.get("name") or task.get("remote")
+                decorated["task_id"] = task.get("id")
+                decorated["mode"] = task_mode
+                # 需执行的跨任务统一优先，避免第一个任务的大批「跳过」
+                # 把后面任务的新增/更新/删除明细整段挤掉。
+                if item.get("action") == "skip":
+                    skipped_items.append(decorated)
+                else:
+                    changed_items.append(decorated)
             groups.append(
                 {
                     "id": task.get("id"),
@@ -289,6 +298,8 @@ class StrmGenerator:
         changed = total["create"] + total["update"] + total["delete"] + total["extra"]
         if not changed and not total["skip"] and errors:
             return {"ok": False, "error": errors[0], "errors": errors[:5], "groups": groups}
+        items = changed_items[:PLAN_ITEM_LIMIT]
+        items += skipped_items[: max(0, PLAN_ITEM_LIMIT - len(items))]
         return {
             "ok": True,
             "empty": changed == 0,
@@ -296,8 +307,9 @@ class StrmGenerator:
             "groups": groups,
             "prefix": cfg["strm"].get("prefix") or "",
             "items": items,
+            "changed_items": len(changed_items),
             "errors": errors[:5],
-            "truncated": sum(total.values()) > len(items),
+            "truncated": (len(changed_items) + len(skipped_items)) > len(items),
             "note": "没有需要生成/更新的文件" if changed == 0 else "",
             **total,
         }
@@ -413,7 +425,8 @@ class StrmGenerator:
             "extra_skip": 0,
             "migrate": 0,
         }
-        items: list[dict[str, Any]] = []
+        changed_items: list[dict[str, Any]] = []
+        skipped_items: list[dict[str, Any]] = []
         writes: list[dict[str, Any]] = []
         downloads: list[dict[str, Any]] = []
         keep: set[str] = set()
@@ -484,18 +497,22 @@ class StrmGenerator:
                         "normalize": normalize,
                     }
                 )
-                if len(items) < PLAN_ITEM_LIMIT:
-                    items.append(
-                        {
-                            "rel": strm_rel,
-                            "action": action,
-                            "size": entry["size"],
-                            "remote": entry["path"],
-                            "migrated": bool(migrated),
-                            "prev": prev_text,
-                            "next": content.strip()[:600] if action == "update" else "",
-                        }
-                    )
+                preview = {
+                    "rel": strm_rel,
+                    "action": action,
+                    "size": entry["size"],
+                    "remote": entry["path"],
+                    "migrated": bool(migrated),
+                    "prev": prev_text,
+                    "next": content.strip()[:600] if action == "update" else "",
+                }
+                # 需执行条目优先入列；「跳过」只暂存用于补空位。
+                # 否则几万条的库里前 1000 条全是 skip，后面的新增明细全被截掉。
+                if action == "skip":
+                    if len(skipped_items) < PLAN_ITEM_LIMIT:
+                        skipped_items.append(preview)
+                elif len(changed_items) < PLAN_CHANGED_LIMIT:
+                    changed_items.append(preview)
             elif extra_exts and ext in extra_exts:
                 rel = mirrored
                 target = local_root / rel
@@ -511,8 +528,8 @@ class StrmGenerator:
                     continue
                 counts["extra"] += 1
                 downloads.append({"path": target, "rel": rel, "remote": entry["path"], "size": entry["size"]})
-                if len(items) < PLAN_ITEM_LIMIT:
-                    items.append(
+                if len(changed_items) < PLAN_CHANGED_LIMIT:
+                    changed_items.append(
                         {"rel": rel, "action": "extra", "size": entry["size"], "remote": entry["path"]}
                     )
 
@@ -526,8 +543,8 @@ class StrmGenerator:
                 if any(_is_under(path, root) for root in roots):
                     continue
                 deletes.append(path)
-                if len(items) < PLAN_ITEM_LIMIT:
-                    items.append(
+                if len(changed_items) < PLAN_CHANGED_LIMIT:
+                    changed_items.append(
                         {
                             "rel": str(path.relative_to(local_root).as_posix()),
                             "action": "delete",
@@ -537,6 +554,10 @@ class StrmGenerator:
                     )
             counts["delete"] = len(deletes)
 
+        # 需执行的全放前面，跳过的只补到总上限；这样任何任务的新增/更新/删除
+        # 都不会因为前面有一堆「跳过」而在预览里消失。
+        items = changed_items[:PLAN_CHANGED_LIMIT]
+        items += skipped_items[: max(0, PLAN_ITEM_LIMIT - len(items))]
         return {
             "task": task,
             "mode": normalize_mode(mode),
@@ -769,6 +790,13 @@ class StrmGenerator:
             self.bus.ok(f"✅ STRM 生成完成（{reason}）：{note}", LogBus.STRM)
         else:
             self.bus.warn(f"⚠️ STRM 生成完成（{reason}）：{note}", LogBus.STRM)
+        touched = totals["create"] + totals["update"] + totals["delete"] + totals["extra"]
+        if touched > 20:
+            self.bus.info(
+                f"　　💡 本次有 {touched} 条变动，日志窗口默认只显示最新 20 条，"
+                "点「完整日志」可查看本次全部明细",
+                LogBus.STRM,
+            )
 
         # 生成后不主动预热：入库通知和新片监听都没开的话，新 strm 永远不会被预热。
         # 这一步最容易让人以为「预热坏了」，所以明确提示。

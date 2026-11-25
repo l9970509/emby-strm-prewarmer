@@ -40,19 +40,19 @@
 ├── tools/
 │   ├── build_fpk.py         # 纯 Python 打包脚本（无需 fnpack）
 │   └── make_icons.py        # 图标生成
-└── embyprewarm-1.9.11.fpk    # 当前版本安装包
+└── embyprewarm-1.9.12.fpk    # 当前版本安装包
 ```
 
 ## 快速开始
 
-> **下载最新安装包**：[Releases · v1.9.11](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
+> **下载最新安装包**：[Releases · v1.9.12](https://github.com/l9970509/emby-strm-prewarmer/releases/latest)
 
 ### 飞牛 OS（推荐）
 
-应用中心「手动安装」选择 `embyprewarm-1.9.11.fpk`，或在 SSH 中：
+应用中心「手动安装」选择 `embyprewarm-1.9.12.fpk`，或在 SSH 中：
 
 ```bash
-sudo appcenter-cli install-fpk embyprewarm-1.9.11.fpk
+sudo appcenter-cli install-fpk embyprewarm-1.9.12.fpk
 ```
 
 装完点桌面图标即可在飞牛 Web 桌面内打开面板（路径 `/app/embyprewarm`）。
@@ -86,6 +86,10 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
    是否清理网盘已删除的 strm
 4. 每个任务卡片上有「增量生成」「全量生成」按钮，点开后先看明细预览（新增/更新/跳过/删除），
    确认后才写盘；顶部「全部生成」按各任务自己的模式一起跑
+
+> **定时生成不需要打开「启用 STRM 生成」总开关**：只要任务自己勾了「每天定时生成」并添加了时刻就会按时刻执行，和手动生成一样。服务启动或任务配置变化时，生成日志会打印「定时生成已启用 N 个任务，最近一次执行 …（系统本地时间）」，任务卡片也显示各自「下次 …」，可用来核对 NAS 时区是否与你填的时刻一致；服务重启跨过执行时刻后会补跑一次。
+>
+> 明细预览里**需执行的条目（新增/更新/删除/附件）优先保留**，「跳过」只填空位，所以大库里几千条跳过也不会把后面的新增明细挤掉；勾选「只看变化」时可直接使用。
 
 两种模式的区别（都只作用于该任务自己的目录）：
 

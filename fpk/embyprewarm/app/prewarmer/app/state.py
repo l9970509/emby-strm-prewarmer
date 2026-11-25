@@ -40,7 +40,7 @@ class LogBus:
     STRM = "strm"
     # 内存里只保留最近若干条用于实时增量展示（前端再只显示最新的 20 条）；
     # 完整历史在落盘的每日日志文件里。
-    MEM_MAXLEN = 4000
+    MEM_MAXLEN = 8000
 
     def __init__(self, log_dir: Path, retention_days: int = 7, console: bool = False):
         self.log_dir = Path(log_dir)

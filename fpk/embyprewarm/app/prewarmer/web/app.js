@@ -1303,7 +1303,7 @@ async function loadStrmPlan() {
     if (plan.delete) parts.push(`<b class="plan-del">删除 ${plan.delete}</b>`);
     if (plan.skipped) parts.push(`跳过 ${plan.skipped}`);
     let text = parts.join(' · ');
-    if (plan.truncated) text += '，明细仅显示前 1000 条';
+    if (plan.truncated) text += `，明细优先显示需执行条目，最多 ${(plan.items || []).length} 条（需执行 ${plan.changed_items || 0} 条已全部优先保留）`;
     if (plan.groups && plan.groups.length > 1) {
       text += '<div class="plan-groups">' + plan.groups.map((g) => {
         const c = g.counts || {};

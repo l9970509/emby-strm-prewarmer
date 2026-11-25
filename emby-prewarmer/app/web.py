@@ -266,8 +266,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             current = self.ctx.config.get()
             current.setdefault("strm", {})["tasks"] = tasks
-            self.ctx.config.save(current)
-            self.ctx.bus.info(f"生成任务已更新（{len(tasks)} 个目录）")
+            saved_cfg = self.ctx.config.save(current)
+            scheduled = [
+                t for t in (saved_cfg.get("strm", {}).get("tasks") or [])
+                if t.get("enabled", True) and t.get("schedule_enabled") and t.get("schedule_times")
+            ]
+            self.ctx.bus.info(
+                f"生成任务已更新（{len(tasks)} 个目录，其中 {len(scheduled)} 个已开启定时生成）"
+            )
             self._json({"ok": True, "config": self.ctx.config.public()})
         elif path == "/api/test":
             self._json(self._test_connection(body))
@@ -389,7 +395,9 @@ class Handler(BaseHTTPRequestHandler):
             if since:
                 lines = self.ctx.bus.since(since, channel)
             else:
-                lines = self.ctx.bus.tail(300, channel)
+                # 首次打开/刷新页面时多给一些历史：明细刷得快时 300 条会被
+                # 后面的行挤掉，前端 seq 一推进就再也拉不回来了。
+                lines = self.ctx.bus.tail(1000, channel)
             self._json({"lines": lines, "seq": self.ctx.bus.seq})
         elif path == "/api/logfiles":
             # 可用的每日日志文件列表（新→旧）

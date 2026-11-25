@@ -16,6 +16,11 @@ from .engine import Engine
 from .state import LogBus, Store, fmt_ts
 
 
+# 定时基准单独存放： strmgen 每次生成都会重写 strm_task_state，
+# 两者共用一个字典时，新启用定时的任务基准可能被生成结果覆盖掉。
+STRM_SCHEDULE_META = "strm_schedule_ts"
+
+
 class Scheduler(threading.Thread):
     def __init__(self, config: ConfigStore, engine: Engine, store: Store, bus: LogBus, syncer=None, strmgen=None):
         super().__init__(daemon=True, name="scheduler")
@@ -32,6 +37,7 @@ class Scheduler(threading.Thread):
         self._next_watch: float | None = None
         self._next_sync: float | None = None
         self._strm_next: dict[str, float] = {}
+        self._strm_signature: tuple | None = None
         self._last_watch_trigger = 0.0
         self._watch_poke = threading.Event()   # webhook 唤醒标志（防抖合并）
 
@@ -76,31 +82,46 @@ class Scheduler(threading.Thread):
             self._next_sync = None
 
         # ---- 定时 STRM 生成（每个目录任务各自独立的每日时刻）
+        # 注意：这里刻意不检查 strm.enabled 总开关。手动生成同样不受它约束，
+        # 若定时任务却依赖它，用户只在任务里勾了「每天定时生成」就会永远不跑。
         strm_cfg = cfg.get("strm") or {}
         self._strm_next = {}
-        if self.strmgen is not None and strm_cfg.get("enabled"):
-            states = self.store.meta_get("strm_task_state") or {}
+        if self.strmgen is not None:
+            states = self.store.meta_get(STRM_SCHEDULE_META) or {}
             if not isinstance(states, dict):
                 states = {}
+            # 从旧版 strm_task_state 迁移已有的 schedule_ts，升级后不重复补跑
+            legacy = self.store.meta_get("strm_task_state") or {}
+            if isinstance(legacy, dict):
+                for tid, raw_entry in legacy.items():
+                    if tid in states or not isinstance(raw_entry, dict):
+                        continue
+                    old_ts = float(raw_entry.get("schedule_ts") or 0)
+                    if old_ts > 0:
+                        states[tid] = old_ts
             dirty = False
+            active = 0
+            signature = []
             for task in strm_cfg.get("tasks") or []:
-                if not task.get("enabled", True) or not task.get("schedule_enabled"):
-                    continue
-                times = task.get("schedule_times") or []
+                times_raw = task.get("schedule_times") or []
+                times = [str(t) for t in times_raw] if isinstance(times_raw, (list, tuple)) else []
+                enabled = bool(task.get("enabled", True))
+                sched_on = bool(task.get("schedule_enabled"))
                 tid = str(task.get("id") or "")
-                if not tid or not times:
+                signature.append((tid, enabled, sched_on, tuple(times)))
+                if not enabled or not sched_on or not tid or not times:
                     continue
-                entry = states.setdefault(tid, {})
-                last = float(entry.get("schedule_ts") or 0)
+                active += 1
+                last = float(states.get(tid) or 0)
                 if last <= 0:
                     # 首次启用：以当前时间为基准，避免刚保存就立刻跑一次
-                    entry["schedule_ts"] = now
+                    states[tid] = now
                     dirty = True
                     last = now
                 nxt = self._compute_next_schedule({"mode": "daily", "daily_times": times}, last, now)
                 self._strm_next[tid] = nxt
                 if now >= nxt:
-                    entry["schedule_ts"] = now
+                    states[tid] = now
                     dirty = True
                     name = task.get("name") or task.get("remote")
                     mode_text = "全量" if str(task.get("mode")) == "full" else "增量"
@@ -114,8 +135,9 @@ class Scheduler(threading.Thread):
                     if not started:
                         self.bus.info("…已有生成任务在跑，本次已排入队列", LogBus.STRM)
             if dirty:
-                self.store.meta_set("strm_task_state", states)
+                self.store.meta_set(STRM_SCHEDULE_META, states)
                 self.store.save()
+            self._report_strm_schedules(tuple(sorted(signature)), active)
 
         # 任务刚结束 → 重置自动重试计时，避免立刻又触发
         if self._was_busy and not self.engine.busy():
@@ -281,10 +303,30 @@ class Scheduler(threading.Thread):
             return "即将执行"
         return fmt_ts(ts)
 
+    def _report_strm_schedules(self, signature: tuple, active: int) -> None:
+        """配置变化时打印一次定时清单，方便确认「定时到底有没有被启用」。"""
+        if signature == self._strm_signature:
+            return
+        self._strm_signature = signature
+        if active:
+            soonest = min(self._strm_next.values()) if self._strm_next else 0
+            self.bus.info(
+                f"⏰ 定时生成已启用 {active} 个任务，最近一次执行 {fmt_ts(soonest)}"
+                "（系统本地时间；各任务卡片显示自己的下次时间）",
+                LogBus.STRM,
+            )
+        else:
+            wanted = sum(1 for item in signature if len(item) > 2 and item[2])
+            if wanted:
+                self.bus.warn(
+                    f"⚠️ 有 {wanted} 个任务勾选了定时，但任务被停用或没有添加时刻，定时不会执行",
+                    LogBus.STRM,
+                )
+            else:
+                self.bus.info("⏰ 定时生成：当前没有任务开启定时", LogBus.STRM)
+
     def next_strm_text(self) -> str:
-        cfg = self.config.get()
-        strm = cfg.get("strm") or {}
-        if not strm.get("enabled") or not self._strm_next:
+        if not self._strm_next:
             return "未开启"
         ts = min(self._strm_next.values())
         if ts <= time.time():
