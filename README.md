@@ -8,7 +8,7 @@
 
 - ✅ 不下载完整视频，不修改 STRM / NFO，不注入虚假媒体信息
 - ✅ 自动跳过已预热影片，只做增量；同名 STRM 换源自动识别（内容指纹按**链接语义**比较）
-- ✅ 预热完成后导出 `{filename}-mediainfo.json` 备份（StrmTool 兼容格式，可反向恢复）
+- ✅ 预热完成后导出 `{filename}-mediainfo.json` 备份（[StrmTool](https://github.com/jinlin-teck/StrmTool) 兼容格式，可一键反向恢复）
 - ✅ 备份可同步到独立备份目录（对比增量、结构一致、可选图片字幕）
 - ✅ PushPlus / Webhook 完成通知，只在有实际变动时推送
 - ✅ 纯 Python 标准库，零第三方依赖；提供飞牛 fpk 原生安装包（统一网关，桌面内打开面板）
@@ -22,7 +22,7 @@
 | 新片入库监听 | 按入库时间增量查询 Emby，发现新片立即预热 |
 | 入库通知唤醒 | 接收 Emby Webhooks 的 `library.new`，秒级响应 |
 | 失败循环预热 | 单项重试 + 运行内多轮 + 后台指数退避持续重试 + 手动预热 |
-| 媒体信息备份 | 自动导出 mediainfo.json，另有全库补导出模式 |
+| 媒体信息备份 | 自动导出 mediainfo.json（[StrmTool](https://github.com/jinlin-teck/StrmTool) 兼容格式，可一键恢复），另有全库补导出模式 |
 | 备份同步 | 同步到备份目录 B，B 已存在跳过、不存在复制；手动/预热后/定时触发；支持按目录排除（同步设置里填排除路径，或在 STRM 任务里勾选「此任务不同步」） |
 | Web 面板 | 四页面（预热 / STRM 生成 / 备份同步 / 任务记录）、日志窗口固定显示最新 20 条、完整日志按天归档可点开查看、失败队列、在线改配置 |
 | 消息通知 | PushPlus（微信）与通用 Webhook，附发送测试按钮 |
@@ -167,6 +167,44 @@ sudo bash install.sh              # 默认 /opt/emby-prewarmer，端口 8787
 
 面板的日志窗口是**固定高度**（桌面 340px、窄屏 260px），内容在窗口内部滚动，页面长度不会随日志增长。
 
+## 媒体信息恢复（配合 StrmTool）
+
+预热成功后，本工具会在 `.strm` 同目录写出 `{filename}-mediainfo.json`，格式与
+[StrmTool](https://github.com/jinlin-teck/StrmTool) 的备份**完全一致**。这些 json 就是
+「探测一次、长期复用」的关键：以后 Emby 手动刷新媒体库、重建媒体库、重装或迁移服务器
+导致媒体信息丢失时，不必再让 Emby 逐条去读网盘直链（慢、且容易触发网盘风控），
+直接用 StrmTool 从本地 json 批量还原即可。
+
+### 相关链接
+
+| 项目 | 说明 |
+| --- | --- |
+| [StrmTool（上游 · Emby 版）](https://github.com/jinlin-teck/StrmTool) | Emby STRM 媒体增强插件，当前 v2.8.0、适用 Emby 4.8+；提供备份 / 导出 / 恢复三个计划任务 |
+| [StrmTool Releases](https://github.com/jinlin-teck/StrmTool/releases) | 下载 `StrmTool.dll`（认准 `-emby` 后缀版本） |
+| [StrmTool-Jellyfin](https://github.com/jinlin-teck/StrmTool-Jellyfin) | Jellyfin 版（已独立为单独仓库，.NET 10 / Jellyfin 12） |
+| [l9970509/StrmTool](https://github.com/l9970509/StrmTool) | 本项目维护者的 fork（修改自 faush01/StrmExtract，适配新版 Emby / Jellyfin） |
+| [MediaInfoKeeper](https://github.com/l9970509/MediaInfoKeeper) | 同作者的另一款 Emby STRM 插件：媒体信息持久化、元数据刷新 |
+
+> 本项目只负责**生成**兼容格式的备份，恢复动作由 StrmTool 插件完成；两者可独立使用，
+> 不装 StrmTool 也不影响预热、备份与同步功能。
+
+### 恢复步骤
+
+1. **安装 StrmTool**：从 Releases 下载 `StrmTool.dll`，放入 Emby 配置目录的
+   `plugins/StrmTool/`，重启 Emby，确认插件状态为 `Active`。
+2. **确认备份就位**：`Movie.strm` 与 `Movie-mediainfo.json` 必须**同目录、同名**（仅后缀不同）。
+3. **执行恢复**：Emby 管理后台 →「计划任务」→「**恢复 STRM 媒体信息**」→ 手动执行。
+   该任务是纯本地磁盘操作、**零远程网络请求**，只补全缺失信息的条目，已有完整信息的自动跳过。
+
+### 与「备份同步」配合
+
+若开启了备份同步、把 json 复制到了独立备份目录 B，恢复前需把 B 里的 json 按原目录结构
+拷回各自 `.strm` 同目录（或把 B 配置成 StrmTool 的「自定义集中备份目录」），
+否则同目录找不到备份，恢复任务会跳过这些条目。
+
+> StrmTool 的「导出 STRM 媒体信息」任务一般不用再跑 —— 本工具预热时已把备份写好；
+> 老库里还没备份的影片，可用面板「导出备份」或 `python3 run.py export` 补齐。
+
 ## 自行打包 fpk
 
 ```bash
@@ -177,6 +215,6 @@ python3 tools/build_fpk.py        # 输出 embyprewarm-<manifest 版本号>.fpk
 
 ## 说明
 
-- 本项目与 Emby、StrmTool、飞牛 OS 官方均无关联，仅为个人自用工具的开源分享
+- 本项目与 Emby、[StrmTool](https://github.com/jinlin-teck/StrmTool)、飞牛 OS 官方均无关联，仅为个人自用工具的开源分享
 - 媒体信息来自 Emby 自身的探测结果，工具不伪造数据、不修改影片文件
 - 请勿将包含真实 API Token 的 `config.json` 提交到公开仓库（已在 `.gitignore` 中排除）

@@ -81,6 +81,35 @@
   两边完全一致时不打扰
 - **日志独立**：同步日志与预热日志分开展示在各自页面
 
+## 媒体信息恢复（配合 StrmTool）
+
+本工具导出的 `{filename}-mediainfo.json` 与 [StrmTool](https://github.com/jinlin-teck/StrmTool)
+的备份格式完全一致，因此可以直接交给 StrmTool 的「恢复 STRM 媒体信息」任务还原。
+常见场景：手动刷新媒体库导致已提取信息丢失、重建媒体库、重装或迁移 Emby 服务器。
+恢复是**纯本地磁盘操作、零远程网络请求**，比重新全库探测快得多，也不会触发网盘风控。
+
+### 相关链接
+
+- [StrmTool（上游 · Emby 版）](https://github.com/jinlin-teck/StrmTool) —— 当前 v2.8.0，适用 Emby 4.8+
+- [StrmTool Releases](https://github.com/jinlin-teck/StrmTool/releases) —— 下载 `StrmTool.dll`（选 `-emby` 后缀）
+- [StrmTool-Jellyfin](https://github.com/jinlin-teck/StrmTool-Jellyfin) —— Jellyfin 独立版（.NET 10 / Jellyfin 12）
+- [l9970509/StrmTool](https://github.com/l9970509/StrmTool) —— 本项目维护者的 fork（修改自 faush01/StrmExtract）
+- [MediaInfoKeeper](https://github.com/l9970509/MediaInfoKeeper) —— 同作者的另一款 Emby STRM 插件（媒体信息持久化 / 元数据刷新）
+
+### 使用方法
+
+1. **安装**：把 `StrmTool.dll` 放进 Emby 配置目录的 `plugins/StrmTool/`，重启 Emby，
+   在「插件」页确认状态为 `Active`。
+2. **备份就位**：`Movie.strm` 与 `Movie-mediainfo.json` 必须同目录、同名（仅后缀不同）；
+   本工具预热时已自动写好，老库可用「导出备份」按钮或 `python3 run.py export` 补齐。
+3. **执行恢复**：**Emby 管理后台 → 计划任务 → 恢复 STRM 媒体信息 → 手动执行**。
+   只补全缺少音视频信息的条目，已有完整信息的自动跳过，不会覆盖。
+4. **配合备份同步**：若把 json 同步到了目录 B，恢复前需按原目录结构拷回 `.strm` 同目录，
+   或把 B 填进 StrmTool 的「自定义集中备份目录」，否则同目录找不到备份会被跳过。
+
+> 本项目只负责**生成**兼容格式的备份，恢复由 StrmTool 插件完成；不装 StrmTool
+> 不影响本工具的预热、备份与同步功能。StrmTool 的「导出 STRM 媒体信息」任务通常无需再跑。
+
 ## STRM 生成（OpenList 网盘 → 本地 strm）
 
 参考 [OpenStrm](https://github.com/indown/OpenStrm) 的「前缀 + 远端路径」方案实现，
